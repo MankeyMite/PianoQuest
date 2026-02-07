@@ -1,0 +1,181 @@
+:root { --bg:#101624; --fg:#e9f0ff; --panel:#121a2c; --edge:#2a334b; }
+html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+header { padding:10px 12px; display:flex; gap:8px; align-items:center; background:#0d1322; position:sticky; top:0; z-index:2; }
+h1 { font-size:15px; margin:0; font-weight:700; }
+button, input { font:inherit; border-radius:10px; border:1px solid var(--edge); padding:8px 12px; background:#141a2b; color:var(--fg); }
+button.primary { background:#2a3352; border-color:#3a4470; }
+.wrap { display:grid; grid-template-columns: 1fr; gap:10px; padding:10px; max-width: 480px; margin: 0 auto 14px; }
+.panel { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:10px; }
+.gameShell { position:relative; }
+canvas { image-rendering: pixelated; width: 100%; height: auto; border-radius: 14px; border:1px solid var(--edge); background:#0f1424; display:block; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.bar { height:10px; background:#26324b; border-radius:8px; overflow:hidden; }
+.fill { height:100%; width:0; background:linear-gradient(90deg,#4ea1ff,#89f7fe); }
+.stat { font-variant-numeric: tabular-nums; }
+small { color:#a9b3cf; }
+
+/* small helper to reduce canvas aliasing on some browsers */
+canvas { image-rendering: pixelated; }
+
+/* Game Over overlay */
+.game-over-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+.game-over-overlay .go-card {
+	pointer-events: auto;
+	background: linear-gradient(180deg, rgba(20,10,10,0.9), rgba(10,5,5,0.85));
+	border-radius: 14px;
+	padding: 22px;
+	text-align: center;
+	color: #fff;
+	width: 80%;
+	max-width: 320px;
+	box-shadow: 0 12px 30px rgba(0,0,0,0.6), 0 2px 0 rgba(0,0,0,0.3) inset;
+}
+.go-title {
+	margin: 0 0 8px 0;
+	font-size: 44px;
+	line-height: 1;
+	color: #ff3b3b;
+	font-weight: 900;
+	text-shadow: 0 6px 0 rgba(0,0,0,0.6), 0 1px 0 #fff2b8 inset;
+	-webkit-text-stroke: 2px rgba(120,10,10,0.6);
+}
+.go-score, .go-best { font-size: 18px; margin: 6px 0; color:#ffdede }
+.go-buttons { display:flex; gap:10px; justify-content:center; margin-top:12px }
+.go-buttons button { min-width:110px }
+
+/* Main menu overlay */
+.menu-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+
+/* Use a full-screen picture as the main-menu background (covers the canvas)
+   Hide the card by default so the picture fills the screen on app load.
+   Add `.show-card` to reveal the card when needed. */
+.menu-overlay {
+    background-image: url('Assets/Pictures/Main menu.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+.menu-overlay .menu-card { display: none; }
+.menu-overlay.show-card .menu-card { display: block; }
+.menu-overlay.show-card { background-image: none; background-color: rgba(6,8,14,0.95); align-items: flex-start; justify-content: flex-start; }
+.menu-overlay.show-card .menu-card { display:block; width:100%; max-width:none; height:100%; border-radius:0; margin:0; padding:18px; box-sizing:border-box; overflow:auto; }
+.menu-overlay.show-card .menu-banner { display:none; }
+.menu-overlay.show-card .menu-floating-actions { display:none; }
+.menu-overlay.show-card .modes-scroll { max-height: calc(100% - 160px); overflow:auto; }
+.menu-overlay .menu-card {
+	pointer-events: auto;
+	background: linear-gradient(180deg, rgba(8,12,24,0.96), rgba(6,8,14,0.95));
+	border-radius: 14px;
+	padding: 18px;
+	overflow: hidden;
+	min-width: 280px;
+	box-sizing: border-box;
+	width: 86%;
+	max-width: 420px;
+	color: #eaf6ff;
+	box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+}
+
+.menu-banner { width:100%; display:block; margin-bottom:10px; }
+/* make the banner pop with a pixel-art frame and glow */
+.menu-banner img { width:100%; height:220px; object-fit:cover; border-radius:8px; display:block; box-shadow: 0 18px 40px rgba(0,0,0,0.6), 0 0 40px rgba(120,100,255,0.08) inset; border:4px solid rgba(6,8,14,0.6); image-rendering: pixelated; }
+
+
+/* Floating action buttons that sit on top of the full-screen banner */
+.menu-floating-actions {
+	position: absolute;
+	bottom: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	gap: 12px;
+	pointer-events: auto;
+	z-index: 4;
+}
+.menu-floating-actions button {
+	min-width: 140px;
+	padding: 10px 18px;
+	border-radius: 8px;
+	position: relative;
+	font-weight: 900;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	font-size: 15px;
+	border: 3px solid rgba(0,0,0,0.6);
+	cursor: pointer;
+	box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 18px rgba(110,190,255,0.06) inset;
+	transition: transform 160ms ease, box-shadow 160ms ease;
+	color: #041226;
+	background: linear-gradient(90deg, #ffd24d 0%, #ff7a4d 35%, #7be1ff 65%, #8b6bff 100%);
+	background-size: 200% 100%;
+	text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+.menu-floating-actions button.primary { background: linear-gradient(90deg,#ffd24d 0%,#ff8a4d 40%,#ffd24d 100%); }
+.menu-floating-actions button:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 18px 45px rgba(0,0,0,0.6), 0 0 30px rgba(120,90,255,0.14); }
+.menu-floating-actions button:active { transform: translateY(-2px) scale(0.99); }
+
+/* add a subtle neon rim around the buttons to match the banner colors */
+.menu-floating-actions button::after{
+	content: '';
+	position: absolute;
+	left: -6px; right: -6px; top: -6px; bottom: -6px;
+	border-radius: 10px;
+	pointer-events: none;
+	box-shadow: 0 0 18px rgba(123,107,255,0.12), 0 0 10px rgba(123,227,255,0.06);
+	opacity: 0.9;
+}
+.menu-title { margin:0 0 8px 0; font-size:22px; font-weight:800; }
+.menu-actions { display:flex; gap:10px; margin-bottom:12px }
+.menu-actions button { flex:1 }
+.back-button { flex:0 0 44px; width:44px; padding:6px; font-size:18px; border-radius:8px }
+.choose-panel { background: linear-gradient(180deg, rgba(12,16,30,0.6), rgba(6,8,14,0.4)); padding:10px; border-radius:10px }
+.modes-scroll { max-height:220px; overflow:auto; padding-right:6px }
+.mode-category { font-size:12px; color:#9fb3d9; margin:8px 6px }
+.mode-item { display:flex; gap:10px; align-items:center; padding:8px; border-radius:8px; margin:6px; background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent) }
+.mode-thumb { width:48px; height:48px; background:linear-gradient(135deg,#ffb84d,#ffa36b); border-radius:6px; box-shadow: inset 0 -6px 10px rgba(0,0,0,0.15); flex:0 0 48px }
+.mode-meta { display:flex; flex-direction:column }
+.mode-name { font-weight:700 }
+.mode-desc { font-size:12px; color:#bcd3ef }
+
+.mode-levels { margin-top:8px; }
+.levels-header { color:#9fb3d9; font-size:12px; margin:6px }
+.levels-grid { display:flex; flex-wrap:wrap; gap:8px }
+.level-item { width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:8px; background:rgba(255,255,255,0.02); cursor:pointer; font-weight:700 }
+.level-item.locked { opacity:0.28; cursor:not-allowed; filter:grayscale(0.6) }
+.level-item.unlocked { box-shadow: 0 6px 12px rgba(0,0,0,0.35) }
+.level-timer { color:#eaf6ff; font-weight:700 }
+
+/* Ready overlay */
+.ready-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+.ready-card {
+	pointer-events: auto;
+	background: linear-gradient(180deg, rgba(8,8,12,0.95), rgba(4,4,6,0.95));
+	padding: 22px 28px;
+	border-radius: 12px;
+	text-align: center;
+	color: #fff;
+	box-shadow: 0 12px 28px rgba(0,0,0,0.6);
+}
+.ready-title { font-size:42px; font-weight:800; color:#ff4d4d; margin-bottom:6px; text-shadow:0 6px 0 rgba(0,0,0,0.5) }
+.ready-sub { font-size:14px; color:#dfefff }
