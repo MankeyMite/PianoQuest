@@ -80,9 +80,16 @@
                 <div style="margin-bottom:6px">Level: <div class="bar" style="display:inline-block; width:140px; vertical-align:middle; margin-left:6px"><div id="calibLevel" class="fill" style="width:0"></div></div></div>
                 <div style="margin-top:6px">Detected: <span id="calibDetected">—</span></div>
                 <div style="margin-top:6px">Suggested tolerance: <span id="calibSuggestedTol">—</span> ¢</div>
+                <div style="margin-top:8px">Tolerance: <input id="tol" type="range" min="10" max="100" step="1" value="35" style="width:160px; vertical-align:middle; margin-left:8px"> <span id="tolVal" style="margin-left:8px; font-weight:700">35</span> ¢</div>
+                <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+                  <label style="display:flex; align-items:center; gap:8px">Threshold (dB)
+                    <input id="calibThreshold" type="range" min="-60" max="-20" step="1" value="-40" style="width:160px; vertical-align:middle; margin-left:8px">
+                  </label>
+                  <button id="calibRecordBtn" style="width:34px; height:34px; border-radius:18px; background:#330000; border:1px solid #550000; color:#fff">●</button>
+                  <div id="calibDbReadout" style="min-width:80px; font-family:monospace;">-</div>
+                </div>
                 <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap">
-                  <button id="calibAmbientBtn">Measure ambient (2s)</button>
-                  <button id="calibTargetBtn">Capture target (play note)</button>
+                  <button id="calibTargetBtn">Calibrate pitch (play C)</button>
                   <button id="calibVerifyBtn">Verify different note</button>
                 </div>
                 <div id="calibMsg" style="margin-top:8px; color:#ffdede"></div>

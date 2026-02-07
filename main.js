@@ -7,7 +7,7 @@ function freqToMidi(f) { return 69 + 12 * Math.log2(f / A4); }
 function midiToFreq(m) { return A4 * Math.pow(2, (m - 69) / 12); }
 function midiToNoteName(m) {
   const n = Math.round(m);
-  const name = NOTE_NAMES[(n + 3 + 1200) % 12];
+  const name = NOTE_NAMES[((n % 12) + 12) % 12];
   const octave = Math.floor(n / 12) - 1;
   return `${name}${octave}`;
 }
@@ -18,12 +18,12 @@ function centsOff(freq, midiRounded) {
 function nearestMidiNatural(freq){
   const m = freqToMidi(freq);
   const r = Math.round(m);
-  const name = NOTE_NAMES[(r+3+1200)%12];
+  const name = NOTE_NAMES[((r % 12) + 12) % 12];
   if (!name.includes('#')) return { midi:r, letter:name };
   const left=r-1, right=r+1;
   const leftDiff=Math.abs(m-left), rightDiff=Math.abs(m-right);
   const pick = (leftDiff <= rightDiff) ? left : right;
-  return { midi: pick, letter: NOTE_NAMES[(pick+3+1200)%12] };
+  return { midi: pick, letter: NOTE_NAMES[((pick % 12) + 12) % 12] };
 }
 
 /* -------------- Pitch detection (autocorrelation) -------------- */
@@ -106,13 +106,28 @@ function boot(){
     calibLevel: document.getElementById('calibLevel'),
     calibDetected: document.getElementById('calibDetected'),
     calibSuggestedTol: document.getElementById('calibSuggestedTol'),
-    calibAmbientBtn: document.getElementById('calibAmbientBtn'),
     calibTargetBtn: document.getElementById('calibTargetBtn'),
     calibVerifyBtn: document.getElementById('calibVerifyBtn'),
+    calibThreshold: document.getElementById('calibThreshold'),
+    calibRecordBtn: document.getElementById('calibRecordBtn'),
+    calibDbReadout: document.getElementById('calibDbReadout'),
+    tolVal: document.getElementById('tolVal'),
     calibSaveBtn: document.getElementById('calibSaveBtn'),
     calibCloseBtn: document.getElementById('calibCloseBtn'),
     calibMsg: document.getElementById('calibMsg'),
   };
+  // lightweight on-screen debug panel (created if missing) to show mapping info
+  if (!document.getElementById('detDebug')){
+    const dd = document.createElement('div');
+    dd.id = 'detDebug';
+    dd.style.position = 'fixed'; dd.style.right = '12px'; dd.style.bottom = '12px';
+    dd.style.padding = '8px 10px'; dd.style.background = 'rgba(0,0,0,0.6)'; dd.style.color = '#fff';
+    dd.style.fontFamily = 'monospace'; dd.style.fontSize = '12px'; dd.style.borderRadius = '6px'; dd.style.zIndex = 9999;
+    dd.style.maxWidth = '320px'; dd.style.whiteSpace = 'pre-wrap';
+    dd.textContent = 'detDebug ready';
+    document.body.appendChild(dd);
+  }
+  ui.detDebug = document.getElementById('detDebug');
   // expose for legacy functions and console debugging
   window.ui = ui;
     // menu music element (created lazily)
@@ -195,7 +210,7 @@ function boot(){
       if (ui.status) ui.status.textContent = `MIDI: note ${note} on (shifted to ${shifted})`;
 
       // Try direct letter match from the shifted MIDI note
-      const letter = NOTE_NAMES[(shifted + 3 + 1200) % 12];
+      const letter = NOTE_NAMES[((shifted % 12) + 12) % 12];
       const hit = matchLowestByLetter(letter);
       console.log('MIDI note', note, 'shifted', shifted, name, 'letter', letter, 'hit?', hit);
     }
@@ -409,6 +424,15 @@ function boot(){
     if (!isNaN(savedTol) && ui.tol) ui.tol.value = String(savedTol);
   }catch(e){}
 
+  // apply saved threshold (dB) if present
+  try{
+    const savedTh = Number(localStorage.getItem('mic_thresh_db'));
+    if (!isNaN(savedTh) && ui.calibThreshold) ui.calibThreshold.value = String(savedTh);
+  }catch(e){}
+  // show tol value label if present
+  if (ui.tol && ui.tolVal) ui.tolVal.textContent = String(ui.tol.value || 35);
+  if (ui.calibThreshold && ui.calibDbReadout) ui.calibDbReadout.textContent = `${ui.calibThreshold.value} dB`;
+
   // Calibration UI handlers and helpers
   async function ensureMicForCalibration(){
     if (audio.running && audio.analyser) return true;
@@ -454,7 +478,17 @@ function boot(){
       const iv = setInterval(()=>{
         audio.analyser.getFloatTimeDomainData(audio.data);
         const res = autoCorrelate(audio.data.slice(), audio.sampleRate);
-        if (res.freq){ const { midi, letter } = nearestMidiNatural(res.freq); const c = Math.round(centsOff(res.freq, midi)); notes.push(letter); cents.push(c); if (ui.calibDetected) ui.calibDetected.textContent = `${letter} (${res.freq.toFixed(1)} Hz, ${c}¢)`; }
+        if (res.freq){
+          const { midi, letter } = nearestMidiNatural(res.freq);
+          const c = Math.round(centsOff(res.freq, midi));
+          notes.push(letter); cents.push(c);
+          if (ui.calibDetected) ui.calibDetected.textContent = `${letter} (${res.freq.toFixed(1)} Hz, ${c}¢)`;
+          try{
+            const midiF = freqToMidi(res.freq);
+            console.debug('calib-sample', {freq: res.freq.toFixed(2), A4, midiFloat: midiF.toFixed(3), midiNearest: midi, letter, cents: c});
+            if (ui && ui.detDebug) ui.detDebug.textContent = `A4: ${A4}\nfreq: ${res.freq.toFixed(2)} Hz\nmidiFloat: ${midiF.toFixed(3)}\nmidiNearest: ${midi}\nletter: ${letter}\ncents: ${c}`;
+          }catch(e){}
+        }
         if (performance.now() - t0 >= durationMs){ clearInterval(iv); if (notes.length===0) return resolve({ok:true, count:0});
           const tally = {}; for (const n of notes) tally[n] = (tally[n]||0)+1; const sorted = Object.keys(tally).sort((a,b)=>tally[b]-tally[a]); const common = sorted[0];
           const minC = Math.min(...cents); const maxC = Math.max(...cents); const spread = maxC - minC; const avg = cents.reduce((a,b)=>a+b,0)/cents.length;
@@ -463,12 +497,40 @@ function boot(){
     });
   }
 
+  // start/stop target capture (no time limit) so user can find the key at their pace
+  function startTargetCapture(){
+    // legacy generic capture kept for compatibility
+    if (!audio.analyser) { ensureMicForCalibration().then(ok=>{ if (!ok) return; startTargetCapture(); }); return; }
+    game._targetNotes = [];
+    game._targetCents = [];
+    if (ui.calibTargetBtn) ui.calibTargetBtn.textContent = 'Stop capture';
+    game._targetCaptureIv = setInterval(()=>{
+      audio.analyser.getFloatTimeDomainData(audio.data);
+      const res = autoCorrelate(audio.data.slice(), audio.sampleRate);
+      if (res.freq){ const { midi, letter } = nearestMidiNatural(res.freq); const c = Math.round(centsOff(res.freq, midi)); game._targetNotes.push(letter); game._targetCents.push(c); if (ui.calibDetected) ui.calibDetected.textContent = `${letter} (${res.freq.toFixed(1)} Hz, ${c}¢)`; }
+    }, 120);
+  }
+
+  function stopTargetCapture(){
+    if (game._targetCaptureIv){ clearInterval(game._targetCaptureIv); game._targetCaptureIv = null; }
+    if (ui.calibTargetBtn) ui.calibTargetBtn.textContent = 'Capture target (play note)';
+    const notes = game._targetNotes || [];
+    const cents = game._targetCents || [];
+    if (!notes.length){ if (ui.calibMsg) ui.calibMsg.textContent = 'No pitch captured. Try again.'; return; }
+    const tally = {}; for (const n of notes) tally[n] = (tally[n]||0)+1; const sorted = Object.keys(tally).sort((a,b)=>tally[b]-tally[a]); const common = sorted[0];
+    const minC = Math.min(...cents); const maxC = Math.max(...cents); const spread = maxC - minC; const avg = cents.reduce((a,b)=>a+b,0)/cents.length;
+    const suggested = Math.max(20, Math.ceil(spread * 1.2));
+    if (ui.calibSuggestedTol) ui.calibSuggestedTol.textContent = String(suggested);
+    if (ui.calibMsg) ui.calibMsg.textContent = `Captured ${common} (spread ${spread}¢). Suggested tol ${suggested}¢.`;
+    game._calib = { ambient: game._calib && game._calib.ambient ? game._calib.ambient : null, target: { letter: common, centsAvg: Math.round(avg), centsSpread: spread }, suggested };
+  }
+
   async function runQuickCalibration(){
     if (ui.calibMsg) ui.calibMsg.textContent = 'Measuring ambient...';
     const amb = await measureAmbient(2000);
     if (!amb.ok){ if (ui.calibMsg) ui.calibMsg.textContent = 'Microphone needed.'; return; }
     if (ui.calibMsg) ui.calibMsg.textContent = `Ambient: ${Math.round(amb.db)} dB`;
-    if (ui.calibMsg) ui.calibMsg.textContent = 'Now play the target note (2s)...';
+    if (ui.calibMsg) ui.calibMsg.textContent = 'Now play the target note...';
     const targ = await measurePitch(2000);
     if (!targ.ok || targ.count===0){ if (ui.calibMsg) ui.calibMsg.textContent = 'Could not detect a pitch. Try closer/louder.'; return; }
     const suggested = Math.max(20, Math.ceil(targ.centsSpread * 1.2));
@@ -495,8 +557,54 @@ function boot(){
   }
 
   if (ui.calibrateBtn) ui.calibrateBtn.addEventListener('click', ()=>{ if (ui.calibPanel) ui.calibPanel.style.display = (ui.calibPanel.style.display === 'none' ? 'block' : 'none'); });
-  if (ui.calibAmbientBtn) ui.calibAmbientBtn.addEventListener('click', ()=>{ runQuickCalibration(); });
-  if (ui.calibTargetBtn) ui.calibTargetBtn.addEventListener('click', ()=>{ runQuickCalibration(); });
+  // Tolerance slider -> update label and persist on change
+  if (ui.tol){ ui.tol.addEventListener('input', ()=>{ if (ui.tolVal) ui.tolVal.textContent = String(ui.tol.value); try{ localStorage.setItem('mic_tol_cents', String(Number(ui.tol.value)||35)); }catch(e){} }); }
+
+  // Threshold slider -> update readout and persist
+  if (ui.calibThreshold){ ui.calibThreshold.addEventListener('input', ()=>{ if (ui.calibDbReadout) ui.calibDbReadout.textContent = `${ui.calibThreshold.value} dB`; try{ localStorage.setItem('mic_thresh_db', String(Number(ui.calibThreshold.value)||-40)); }catch(e){} }); }
+
+  // Calibrate pitch (explicitly for C) - toggle behavior
+  async function startCalibratePitch(expectedLetter='C'){
+    if (!audio.analyser) { const ok = await ensureMicForCalibration(); if (!ok) { if (ui.calibMsg) ui.calibMsg.textContent = 'Microphone needed.'; return; } }
+    game._targetNotes = [];
+    game._targetCents = [];
+    game._acceptedSamples = 0;
+    if (ui.calibTargetBtn) ui.calibTargetBtn.textContent = 'Stop';
+    if (ui.calibMsg) ui.calibMsg.textContent = `Please play a ${expectedLetter} repeatedly.`;
+    const thresholdDb = ui.calibThreshold ? Number(ui.calibThreshold.value) : -40;
+    game._targetCaptureIv = setInterval(()=>{
+      audio.analyser.getFloatTimeDomainData(audio.data);
+      // compute rms and db
+      let rms=0; for (let i=0;i<audio.data.length;i++){ const v=audio.data[i]; rms += v*v; } rms = Math.sqrt(rms/audio.data.length);
+      const db = rmsToDb(rms);
+      if (ui.calibDbReadout) ui.calibDbReadout.textContent = `${Math.round(db)} dB`;
+      // update record button color when above threshold
+      if (ui.calibRecordBtn) ui.calibRecordBtn.style.background = (db >= thresholdDb ? '#ff4d4d' : '#330000');
+      // small level bar show
+      const pct = Math.min(100, Math.max(0, (db + 60) * 1.6)); setCalibLevel(pct);
+      if (db < thresholdDb) return; // ignore low signals
+      const res = autoCorrelate(audio.data.slice(), audio.sampleRate);
+      if (res.freq){ const near = nearestMidiNatural(res.freq); const c = Math.round(centsOff(res.freq, near.midi)); if (ui.calibDetected) ui.calibDetected.textContent = `${near.letter} (${res.freq.toFixed(1)} Hz, ${c}¢)`; if (near.letter.replace('#','') === expectedLetter){ game._targetNotes.push(near.letter); game._targetCents.push(c); game._acceptedSamples++; }
+      }
+      // auto-stop after a number of accepted samples
+      if (game._acceptedSamples >= 8){ stopCalibratePitch(); }
+    }, 120);
+  }
+
+  function stopCalibratePitch(){ if (game._targetCaptureIv){ clearInterval(game._targetCaptureIv); game._targetCaptureIv = null; }
+    if (ui.calibTargetBtn) ui.calibTargetBtn.textContent = 'Calibrate pitch (play C)';
+    const notes = game._targetNotes || [];
+    const cents = game._targetCents || [];
+    if (!notes.length){ if (ui.calibMsg) ui.calibMsg.textContent = 'No pitch captured. Try again.'; return; }
+    const tally = {}; for (const n of notes) tally[n] = (tally[n]||0)+1; const sorted = Object.keys(tally).sort((a,b)=>tally[b]-tally[a]); const common = sorted[0];
+    const minC = Math.min(...cents); const maxC = Math.max(...cents); const spread = maxC - minC; const avg = cents.reduce((a,b)=>a+b,0)/cents.length;
+    const suggested = Math.max(20, Math.ceil(spread * 1.2));
+    if (ui.calibSuggestedTol) ui.calibSuggestedTol.textContent = String(suggested);
+    if (ui.calibMsg) ui.calibMsg.textContent = `Captured ${common} (spread ${spread}¢). Suggested tol ${suggested}¢.`;
+    game._calib = { ambient: game._calib && game._calib.ambient ? game._calib.ambient : null, target: { letter: common, centsAvg: Math.round(avg), centsSpread: spread }, suggested };
+  }
+
+  if (ui.calibTargetBtn) ui.calibTargetBtn.addEventListener('click', ()=>{ if (game._targetCaptureIv) stopCalibratePitch(); else startCalibratePitch('C'); });
   if (ui.calibVerifyBtn) ui.calibVerifyBtn.addEventListener('click', ()=>{ runVerifyDifferent(); });
   if (ui.calibSaveBtn) ui.calibSaveBtn.addEventListener('click', ()=>{ saveCalibration(); });
   if (ui.calibCloseBtn) ui.calibCloseBtn.addEventListener('click', ()=>{ if (ui.calibPanel) ui.calibPanel.style.display = 'none'; });
@@ -796,6 +904,11 @@ const game = {
 // transient score pop state (for center big score)
 game.scorePop = 0; // visual pop strength (decays)
 game.lastAdd = { val: 0, t: 10, life: 0 };
+// detection/debug state
+game.detected = { freq: null, letter: null, cents: 0, db: -999 };
+game.detectFlash = 0;
+// stability tracking for sustained detection (ms timestamp)
+game._stable = { letter: null, start: 0, cents: 0 };
 // next spawn absolute timestamp (ms) for level mode
 game.nextSpawnTime = 0;
 // accumulator for deterministic spawn timing
@@ -1103,6 +1216,35 @@ function drawHUD(){
     ctx.textAlign = 'left';
   }
   // overlay handled by DOM when game.over is true
+  // draw an in-game detector box and flash when microphone detects a note
+  try{
+    // detection display area (bottom-center)
+    const dx = W/2; const dy = H - 18;
+    // flash circle
+    if (game.detectFlash && game.detectFlash > 0){
+      const alpha = Math.max(0, Math.min(1, game.detectFlash));
+      const radius = 22 + 28 * alpha;
+      ctx.save(); ctx.globalAlpha = 0.35 * alpha; ctx.fillStyle = '#ffde7a';
+      ctx.beginPath(); ctx.arc(dx, dy - 36, radius, 0, Math.PI*2); ctx.fill(); ctx.restore();
+      game.detectFlash = Math.max(0, game.detectFlash - 0.9 * (1/60));
+    }
+    // small rounded rect with detected note
+    ctx.save();
+    const boxW = 160, boxH = 34; const bx = (W - boxW)/2; const by = H - boxH - 8;
+    ctx.fillStyle = 'rgba(6,8,14,0.6)';
+    roundRect(ctx, bx, by, boxW, boxH, 8, true, false);
+    ctx.fillStyle = '#eaf6ff'; ctx.font = '700 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const det = game.detected && game.detected.letter ? `${game.detected.letter} (${game.detected.db} dB)` : (game.detected && game.detected.freq ? `— (${game.detected.db} dB)` : 'No input');
+    ctx.fillText(det, bx + boxW/2, by + boxH/2);
+    ctx.restore();
+  }catch(e){}
+}
+
+// small helper to draw rounded rects
+function roundRect(ctx, x, y, w, h, r, fill, stroke){
+  if (typeof r === 'undefined') r = 5;
+  ctx.beginPath(); ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r); ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
+  if (fill) ctx.fill(); if (stroke) ctx.stroke();
 }
 
 /* ——— Lowest comet must be cleared first (instant) ——— */
@@ -1250,19 +1392,56 @@ function updateAudio(){
   if (ui.lvl) ui.lvl.style.width = pct + '%';
 
   const res = autoCorrelate(audio.data.slice(), audio.sampleRate);
+  // decide threshold for ignoring low-level noise (dB)
+  const savedTh = Number(localStorage.getItem('mic_thresh_db'));
+  const thresholdDb = (ui && ui.calibThreshold) ? Number(ui.calibThreshold.value) : (isNaN(savedTh) ? -40 : savedTh);
+
   if (res.freq){
     const m = freqToMidi(res.freq);
     const name = midiToNoteName(m);
     const cents = Math.round(centsOff(res.freq, Math.round(m)));
+    // update UI detector fields
     if (ui.detNote) ui.detNote.textContent = name;
     if (ui.detFreq) ui.detFreq.textContent = res.freq.toFixed(1)+' Hz';
     if (ui.detCents) ui.detCents.textContent = (cents>0?'+':'') + cents + ' ¢';
     if (ui.status) ui.status.textContent = 'Listening…';
-    matchLowestCometIfAny(res.freq);
+
+    // record detection only if above threshold; otherwise ignore for matching
+    if (dbApprox >= thresholdDb){
+      const near = nearestMidiNatural(res.freq);
+      const detectedLetter = (near.letter || '').replace('#','');
+      const detectedCents = Math.round(centsOff(res.freq, near.midi));
+      // stability: require the same natural detected within tolerance for at least 100ms
+      const now = performance.now();
+      const tol = ui && ui.tol ? Number(ui.tol.value) : (Number(localStorage.getItem('mic_tol_cents')) || 35);
+      if (game._stable.letter === detectedLetter){
+        // still same letter; if cents within tolerance then ensure start time is set
+        if (Math.abs(detectedCents) <= tol){ if (!game._stable.start) game._stable.start = now; }
+        else { game._stable.start = 0; }
+      } else {
+        // new letter seen; start fresh if within tolerance
+        game._stable.letter = detectedLetter; game._stable.cents = detectedCents; game._stable.start = (Math.abs(detectedCents) <= tol) ? now : 0;
+      }
+
+      game.detected = { freq: res.freq, letter: near.letter, cents: detectedCents, db: Math.round(dbApprox) };
+      // flash visual
+      if (game._stable.start) game.detectFlash = Math.max(game.detectFlash, 1.0);
+      // debug panel update
+      try{ console.debug('pitch-detect', {freq: res.freq.toFixed(2), A4, midiFloat: m.toFixed(3), midiRounded: Math.round(m), midiName: name, nearestNatural: near, db: Math.round(dbApprox), stableStart: game._stable.start}); }catch(e){}
+      // Only match when the detection has been stable long enough
+      if (game._stable.start && (now - game._stable.start) >= 100){
+        matchLowestCometIfAny(res.freq);
+      }
+    } else {
+      // below threshold: show weak reading but do not match and reset stability
+      game.detected = { freq: res.freq, letter: null, cents: Math.round(centsOff(res.freq, Math.round(m))), db: Math.round(dbApprox) };
+      game._stable.start = 0; game._stable.letter = null;
+    }
   } else {
     if (ui.detNote) ui.detNote.textContent = '—';
     if (ui.detFreq) ui.detFreq.textContent = '— Hz';
     if (ui.detCents) ui.detCents.textContent = '—';
+    game.detected = { freq: null, letter: null, cents: 0, db: Math.round(dbApprox) };
   }
 
   requestAnimationFrame(updateAudio);
