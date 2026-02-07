@@ -23,6 +23,7 @@
         <div class="go-best">Best: <span id="overlayBest">0</span></div>
         <div class="go-buttons">
           <button id="playAgainBtn" class="primary">Play again</button>
+          <button id="selectLevelBtn">Select level</button>
           <button id="mainMenuBtn">Main menu</button>
         </div>
       </div>
@@ -70,6 +71,28 @@
               Volume
               <input id="musicVolume" type="range" min="0" max="100" value="55" style="flex:1;">
             </label>
+            <div style="height:8px"></div>
+            <div style="height:8px"></div>
+            <div style="margin-top:6px; border-top:1px solid rgba(255,255,255,0.03); padding-top:8px">
+              <div style="font-weight:800; margin-bottom:6px">Microphone calibration</div>
+              <button id="calibrateBtn">Open calibration</button>
+              <div id="calibPanel" style="display:none; margin-top:8px;">
+                <div style="margin-bottom:6px">Level: <div class="bar" style="display:inline-block; width:140px; vertical-align:middle; margin-left:6px"><div id="calibLevel" class="fill" style="width:0"></div></div></div>
+                <div style="margin-top:6px">Detected: <span id="calibDetected">—</span></div>
+                <div style="margin-top:6px">Suggested tolerance: <span id="calibSuggestedTol">—</span> ¢</div>
+                <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap">
+                  <button id="calibAmbientBtn">Measure ambient (2s)</button>
+                  <button id="calibTargetBtn">Capture target (play note)</button>
+                  <button id="calibVerifyBtn">Verify different note</button>
+                </div>
+                <div id="calibMsg" style="margin-top:8px; color:#ffdede"></div>
+                <div style="height:8px"></div>
+                <div style="display:flex; gap:8px;">
+                  <button id="calibSaveBtn" class="primary">Save calibration</button>
+                  <button id="calibCloseBtn">Close</button>
+                </div>
+              </div>
+            </div>
             <div style="height:8px"></div>
             <div style="display:flex; gap:8px;">
               <button id="settingsCloseBtn">Close</button>

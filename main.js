@@ -83,6 +83,7 @@ function boot(){
     overlayScore: document.getElementById('overlayScore'),
     overlayBest: document.getElementById('overlayBest'),
     playAgainBtn: document.getElementById('playAgainBtn'),
+    selectLevelBtn: document.getElementById('selectLevelBtn'),
     mainMenuBtn: document.getElementById('mainMenuBtn'),
     mainMenuOverlay: document.getElementById('mainMenuOverlay'),
     chooseModeBtn: document.getElementById('chooseModeBtn'),
@@ -99,6 +100,18 @@ function boot(){
     modeLevels: document.getElementById('modeLevels'),
     levelsGrid: document.getElementById('levelsGrid'),
     levelTimer: document.getElementById('levelTimer'),
+    // calibration UI refs
+    calibrateBtn: document.getElementById('calibrateBtn'),
+    calibPanel: document.getElementById('calibPanel'),
+    calibLevel: document.getElementById('calibLevel'),
+    calibDetected: document.getElementById('calibDetected'),
+    calibSuggestedTol: document.getElementById('calibSuggestedTol'),
+    calibAmbientBtn: document.getElementById('calibAmbientBtn'),
+    calibTargetBtn: document.getElementById('calibTargetBtn'),
+    calibVerifyBtn: document.getElementById('calibVerifyBtn'),
+    calibSaveBtn: document.getElementById('calibSaveBtn'),
+    calibCloseBtn: document.getElementById('calibCloseBtn'),
+    calibMsg: document.getElementById('calibMsg'),
   };
   // expose for legacy functions and console debugging
   window.ui = ui;
@@ -120,12 +133,12 @@ function boot(){
       return null;
     }
     function playMenuMusic(){
-      if (!ui.musicToggle || ui.musicToggle.checked === false) return;
       const a = createMenuAudio(); if (!a) return;
       a.play().catch(e=>{ console.warn('menu music play failed', e); });
     }
     function stopMenuMusic(){ if (ui._menuAudio) try{ ui._menuAudio.pause(); ui._menuAudio.currentTime = 0; }catch(e){} }
     // game music (one per game mode) - Meteor game song
+    ui._gameAudio = null;
     function createGameAudio(){
       if (ui._gameAudio) return ui._gameAudio;
       const candidates = ['Assets/Sounds/Meteor game song.wav','Assets/Sounds/Meteor game song.mp3'];
@@ -140,10 +153,7 @@ function boot(){
       console.warn('game audio not available');
       return null;
     }
-    function playGameMusic(){
-      const a = createGameAudio(); if (!a) return;
-      a.play().catch(e=>{ console.warn('game music play failed', e); });
-    }
+    function playGameMusic(){ const a = createGameAudio(); if (!a) return; a.play().catch(e=>{ console.warn('game music play failed', e); }); }
     function stopGameMusic(){ if (ui._gameAudio) try{ ui._gameAudio.pause(); ui._gameAudio.currentTime = 0; }catch(e){} }
     // play crash sfx (creates transient Audio so multiple can overlap)
     function playCrashSfx(){
@@ -193,6 +203,8 @@ function boot(){
 
   // Match by a note letter (e.g., 'C','D') coming from MIDI input.
   function matchLowestByLetter(letter){
+    // don't allow matching when the game isn't actively running (or after game over)
+    if (!game.started || game.over) return false;
     if (game.comets.length === 0) return false;
     let idx = 0, maxY = -Infinity;
     for (let i = 0; i < game.comets.length; i++){
@@ -211,10 +223,9 @@ function boot(){
           const topY = -60; // spawn Y used by spawnComet
           const span = (typeof groundY !== 'undefined') ? Math.max(1, groundY - topY) : 700;
           const frac = Math.max(0, Math.min(1, ( (groundY - target.y) / span )) );
-          const points = Math.floor(1 + frac * 9);
-          game.score += points;
-          if (game.score > game.best){ game.best = game.score; localStorage.setItem('dino_best', String(game.best)); game.hsPop = 1.0; }
-        }catch(e){ game.score += 1; }
+            const points = Math.floor(1 + frac * 9);
+            addScore(points);
+        }catch(e){ addScore(1); }
         game.comets.splice(idx,1);
         game.lastHitAt = now;
         return true;
@@ -295,6 +306,43 @@ function boot(){
 
     // auto-detect and init MIDI on boot
     try{ initMIDI(); }catch(e){ console.warn('Auto initMIDI failed', e); }
+
+    // PC keyboard support: press A-G to hit matching note (ignores typing in inputs)
+    document.addEventListener('keydown', (ev) => {
+      try{
+        if (ev.repeat) return;
+        const tag = ev.target && ev.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (ev.target && ev.target.isContentEditable)) return;
+        const k = (ev.key || '').toUpperCase();
+        if (!/^[A-G]$/.test(k)) return;
+        if (ui && ui.status) ui.status.textContent = `Key ${k} pressed`;
+        const hit = matchLowestByLetter(k);
+        if (hit && ui && ui.status) {
+          ui.status.textContent = `Hit ${k}!`;
+          setTimeout(()=>{ if (ui && ui.status) ui.status.textContent = ''; }, 650);
+        }
+      }catch(e){ console.warn('keyboard handler error', e); }
+    });
+
+    // Select level button -> reveal the mode/levels card
+    if (ui.selectLevelBtn) ui.selectLevelBtn.addEventListener('click', ()=>{
+      try{
+        // hide game over overlay
+        hideGameOver();
+        // ensure overlay is visible (inline style may be 'none' from gameplay), then reveal the card
+        if (ui.mainMenuOverlay) {
+          ui.mainMenuOverlay.style.display = 'flex';
+          ui.mainMenuOverlay.classList.add('show-card');
+        }
+        if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'block';
+        if (ui.modeLevels) ui.modeLevels.style.display = 'block';
+        if (ui.backBtn) ui.backBtn.style.display = 'inline-block';
+        if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
+        if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = 'none';
+        window.currentMode = window.currentMode || 'meteor-sky';
+        renderLevels();
+      }catch(e){ console.warn('selectLevel handler error', e); }
+    });
   if (ui.modesList){
     // already seeded in HTML; ensure it's scrollable and ready for future items
     ui.modesList.style.overflowY = 'auto';
@@ -355,6 +403,104 @@ function boot(){
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
   });
 
+  // Calibration persistence: apply saved tolerance if present
+  try{
+    const savedTol = Number(localStorage.getItem('mic_tol_cents'));
+    if (!isNaN(savedTol) && ui.tol) ui.tol.value = String(savedTol);
+  }catch(e){}
+
+  // Calibration UI handlers and helpers
+  async function ensureMicForCalibration(){
+    if (audio.running && audio.analyser) return true;
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+      if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audio.ctx.createMediaStreamSource(stream);
+      audio.analyser = audio.ctx.createAnalyser();
+      audio.analyser.fftSize = 2048;
+      audio.analyser.smoothingTimeConstant = 0;
+      audio.sampleRate = audio.ctx.sampleRate;
+      audio.data = new Float32Array(audio.analyser.fftSize);
+      src.connect(audio.analyser);
+      audio.running = true;
+      return true;
+    }catch(e){ if (ui.calibMsg) ui.calibMsg.textContent = 'Microphone permission denied.'; return false; }
+  }
+
+  function setCalibLevel(pct){ if (ui.calibLevel) ui.calibLevel.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
+  function rmsToDb(rms){ return 20 * Math.log10(rms + 1e-6); }
+
+  function measureAmbient(durationMs = 2000){
+    return new Promise(async (resolve)=>{
+      const ok = await ensureMicForCalibration(); if (!ok) return resolve({ok:false});
+      const samples = [];
+      const t0 = performance.now();
+      const iv = setInterval(()=>{
+        audio.analyser.getFloatTimeDomainData(audio.data);
+        let rms=0; for (let i=0;i<audio.data.length;i++){ const v=audio.data[i]; rms += v*v; } rms = Math.sqrt(rms/audio.data.length);
+        samples.push(rms);
+        const db = rmsToDb(rms); const pct = Math.min(100, Math.max(0, (db + 60) * 1.6)); setCalibLevel(pct);
+        if (performance.now() - t0 >= durationMs){ clearInterval(iv); const avg = samples.reduce((a,b)=>a+b,0)/samples.length; resolve({ok:true, rms:avg, db:rmsToDb(avg)}); }
+      }, 120);
+    });
+  }
+
+  function measurePitch(durationMs = 2000){
+    return new Promise(async (resolve)=>{
+      const ok = await ensureMicForCalibration(); if (!ok) return resolve({ok:false});
+      const notes = [];
+      const cents = [];
+      const t0 = performance.now();
+      const iv = setInterval(()=>{
+        audio.analyser.getFloatTimeDomainData(audio.data);
+        const res = autoCorrelate(audio.data.slice(), audio.sampleRate);
+        if (res.freq){ const { midi, letter } = nearestMidiNatural(res.freq); const c = Math.round(centsOff(res.freq, midi)); notes.push(letter); cents.push(c); if (ui.calibDetected) ui.calibDetected.textContent = `${letter} (${res.freq.toFixed(1)} Hz, ${c}¢)`; }
+        if (performance.now() - t0 >= durationMs){ clearInterval(iv); if (notes.length===0) return resolve({ok:true, count:0});
+          const tally = {}; for (const n of notes) tally[n] = (tally[n]||0)+1; const sorted = Object.keys(tally).sort((a,b)=>tally[b]-tally[a]); const common = sorted[0];
+          const minC = Math.min(...cents); const maxC = Math.max(...cents); const spread = maxC - minC; const avg = cents.reduce((a,b)=>a+b,0)/cents.length;
+          resolve({ok:true, count:notes.length, letter:common, centsAvg:Math.round(avg), centsSpread:spread}); }
+      }, 120);
+    });
+  }
+
+  async function runQuickCalibration(){
+    if (ui.calibMsg) ui.calibMsg.textContent = 'Measuring ambient...';
+    const amb = await measureAmbient(2000);
+    if (!amb.ok){ if (ui.calibMsg) ui.calibMsg.textContent = 'Microphone needed.'; return; }
+    if (ui.calibMsg) ui.calibMsg.textContent = `Ambient: ${Math.round(amb.db)} dB`;
+    if (ui.calibMsg) ui.calibMsg.textContent = 'Now play the target note (2s)...';
+    const targ = await measurePitch(2000);
+    if (!targ.ok || targ.count===0){ if (ui.calibMsg) ui.calibMsg.textContent = 'Could not detect a pitch. Try closer/louder.'; return; }
+    const suggested = Math.max(20, Math.ceil(targ.centsSpread * 1.2));
+    if (ui.calibSuggestedTol) ui.calibSuggestedTol.textContent = String(suggested);
+    if (ui.calibMsg) ui.calibMsg.textContent = `Captured ${targ.letter} (spread ${targ.centsSpread}¢). Suggested tol ${suggested}¢.`;
+    game._calib = { ambient: amb, target: targ, suggested };
+  }
+
+  async function runVerifyDifferent(){
+    if (!game._calib || !game._calib.target){ if (ui.calibMsg) ui.calibMsg.textContent = 'Capture target first.'; return; }
+    if (ui.calibMsg) ui.calibMsg.textContent = 'Now play a different note (2s)...';
+    const v = await measurePitch(2000);
+    if (!v.ok || v.count===0){ if (ui.calibMsg) ui.calibMsg.textContent = 'No pitch detected during verify.'; return; }
+    const target = game._calib.target.letter.replace('#','');
+    const match = v.letter.replace('#','') === target;
+    const within = Math.abs(v.centsAvg || 0) <= (game._calib.suggested || 35);
+    if (match && within){ if (ui.calibMsg) ui.calibMsg.textContent = 'Verification failed: different note was detected as the same. Increase tolerance or reduce noise.'; }
+    else { if (ui.calibMsg) ui.calibMsg.textContent = 'Verification passed: different note was not mistaken.'; }
+  }
+
+  function saveCalibration(){
+    if (!game._calib){ if (ui.calibMsg) ui.calibMsg.textContent = 'No calibration data to save.'; return; }
+    try{ localStorage.setItem('mic_tol_cents', String(game._calib.suggested)); if (ui.tol) ui.tol.value = String(game._calib.suggested); if (ui.calibMsg) ui.calibMsg.textContent = 'Calibration saved.'; }catch(e){ if (ui.calibMsg) ui.calibMsg.textContent = 'Save failed.'; }
+  }
+
+  if (ui.calibrateBtn) ui.calibrateBtn.addEventListener('click', ()=>{ if (ui.calibPanel) ui.calibPanel.style.display = (ui.calibPanel.style.display === 'none' ? 'block' : 'none'); });
+  if (ui.calibAmbientBtn) ui.calibAmbientBtn.addEventListener('click', ()=>{ runQuickCalibration(); });
+  if (ui.calibTargetBtn) ui.calibTargetBtn.addEventListener('click', ()=>{ runQuickCalibration(); });
+  if (ui.calibVerifyBtn) ui.calibVerifyBtn.addEventListener('click', ()=>{ runVerifyDifferent(); });
+  if (ui.calibSaveBtn) ui.calibSaveBtn.addEventListener('click', ()=>{ saveCalibration(); });
+  if (ui.calibCloseBtn) ui.calibCloseBtn.addEventListener('click', ()=>{ if (ui.calibPanel) ui.calibPanel.style.display = 'none'; });
+
   // level system state
   const MAX_LEVELS = 10;
   const unlockedKey = 'unlocked_level_meteor_sky';
@@ -366,7 +512,11 @@ function boot(){
     const min = 500, max = 2000; const t = (l-1)/9;
     return Math.round(max + (min - max) * t);
   }
-  function speedMultiplierForLevel(l){ return 1 + (l-1) * 0.08; }
+  // level 1 = 30 px/s, then +10 px/s per level
+  function speedMultiplierForLevel(l){
+    const target = 30 + (Math.max(1, l) - 1) * 10; // px/s for this level
+    return target / game.baseBaseSpeed;
+  }
 
   function renderLevels(){
     if (!ui.levelsGrid) return;
@@ -381,6 +531,11 @@ function boot(){
         if (lvl > unlockedLevel) { ui.permMsg.textContent = 'Level locked'; return; }
         // select level
         window.selectedLevel = lvl;
+        // load per-level best for HUD and overlays
+        try{
+          const key = 'meteor_level_best_' + String(lvl);
+          game.best = Number(localStorage.getItem(key) || 0);
+        }catch(e){ console.warn('load per-level best failed', e); }
         // hide menus since we're about to play
         if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
         if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
@@ -396,11 +551,59 @@ function boot(){
   function levelComplete(){
     const lvl = window.selectedLevel || 1;
     if (lvl >= 1 && lvl < MAX_LEVELS){ unlockedLevel = Math.max(unlockedLevel, lvl+1); saveUnlocked(); }
-    ui.permMsg.textContent = 'Level complete! Unlocked level ' + Math.min(unlockedLevel, MAX_LEVELS);
-    // show main menu and refresh levels
-    if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'flex';
-    if (ui.modeLevels) ui.modeLevels.style.display = 'none';
-    renderLevels();
+    // update per-level record and show a styled win overlay
+    const key = 'meteor_level_best_' + String(lvl);
+    const prevBest = Number(localStorage.getItem(key) || 0);
+    const isNew = game.score > prevBest;
+    if (isNew) localStorage.setItem(key, String(game.score));
+
+    // graceful fallback: if overlay DOM isn't available, show a simple message
+    if (!ui || !ui.overlay){
+      ui.permMsg.textContent = 'Level complete! Unlocked level ' + Math.min(unlockedLevel, MAX_LEVELS);
+      if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'flex';
+      if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+      renderLevels();
+      return;
+    }
+
+    // Update overlay title and styling to match the "Well Done!" win state
+    try{
+      const titleEl = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
+      if (titleEl){ titleEl.textContent = 'Well Done!'; titleEl.style.color = '#ffb86b'; }
+
+      // Score + optional new-high badge
+      if (ui.overlayScore) ui.overlayScore.textContent = String(game.score);
+      // remove prior badge
+      const existingBadge = ui.overlayScore && ui.overlayScore.parentElement && ui.overlayScore.parentElement.querySelector('.new-high');
+      if (existingBadge) existingBadge.remove();
+      if (isNew && ui.overlayScore && ui.overlayScore.parentElement){
+        const span = document.createElement('span');
+        span.className = 'new-high';
+        span.textContent = ' New high score!';
+        span.style.color = '#ff8c42';
+        span.style.fontWeight = '800';
+        span.style.marginLeft = '8px';
+        ui.overlayScore.parentElement.appendChild(span);
+      }
+
+      // Record for this level (show the record underneath)
+      const record = isNew ? game.score : prevBest;
+      if (ui.overlayBest) ui.overlayBest.textContent = String(record);
+
+      // show overlay and hide floating actions
+      ui.overlay.style.display = 'flex';
+      if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
+      if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
+      if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+      if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+      renderLevels();
+    }catch(e){
+      // fallback behaviour
+      ui.permMsg.textContent = 'Level complete! Unlocked level ' + Math.min(unlockedLevel, MAX_LEVELS);
+      if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'flex';
+      if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+      renderLevels();
+    }
   }
 
   /* ------------------- Unified Start (mic or midi) ------------------- */
@@ -455,6 +658,19 @@ function boot(){
       if (!midiAccess) await initMIDI();
       ui.permMsg.textContent = 'Using MIDI input.';
       // game loop already runs via requestAnimationFrame(step) at boot
+    }
+    // show a short level banner when a specific level is started
+    if (window.selectedLevel){
+      game.levelBanner = { t: 0, life: 2.0, level: Number(window.selectedLevel) };
+    } else {
+      game.levelBanner = null;
+    }
+    // ensure HUD shows per-level best when a level is active
+    if (window.selectedLevel){
+      try{
+        const key = 'meteor_level_best_' + String(window.selectedLevel);
+        game.best = Number(localStorage.getItem(key) || 0);
+      }catch(e){ console.warn('load per-level best on start failed', e); }
     }
     // If playing a mode/game (e.g., Meteor sky), start the game music.
     try{
@@ -577,6 +793,9 @@ const game = {
   speedFactor: 1,
   lastHitAt: 0
 };
+// transient score pop state (for center big score)
+game.scorePop = 0; // visual pop strength (decays)
+game.lastAdd = { val: 0, t: 10, life: 0 };
 // next spawn absolute timestamp (ms) for level mode
 game.nextSpawnTime = 0;
 // accumulator for deterministic spawn timing
@@ -648,6 +867,22 @@ function explodeAt(x,y,note){
       color: c
     });
   }
+}
+
+// Centralized scoring helper so we can animate score pops and handle high-score logic.
+function addScore(points){
+  if (typeof points !== 'number') points = Number(points) || 0;
+  // increment main score
+  game.score += points;
+  // update per-level/local bests handled elsewhere; keep global backup
+  try{
+    if (game.score > game.best){ game.best = game.score; localStorage.setItem('dino_best', String(game.best)); game.hsPop = 1.0; }
+  }catch(e){ /* ignore */ }
+  // set lastAdd so drawHighScore can render a fading +X; reset timer if already active
+  game.lastAdd = { val: points, t: 0, life: 1.0 };
+  // scorePop scales with points (bigger rewards -> bigger pop)
+  const strength = Math.min(2.5, 0.6 + Math.sqrt(Math.max(1, points)) * 0.18);
+  game.scorePop = Math.max(game.scorePop, strength);
 }
 
 function updateParticles(dt){
@@ -734,13 +969,35 @@ function drawHighScore(){
   if (game.score === 0 && game.hsPop <= 0) return;
   const text = String(game.score);
   const y = groundY - 72;
-  const s = 1 + 0.25 * Math.sin(Math.PI * Math.min(1, game.hsPop));
+  // combine high-score pop and recent-score pop into a single scale
+  const hsFactor = 0.25 * Math.sin(Math.PI * Math.min(1, game.hsPop));
+  const recentFactor = 0.35 * (game.scorePop || 0);
+  const s = 1 + hsFactor + recentFactor;
 
   ctx.save();
   ctx.translate(W/2, y);
   ctx.scale(s, s);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+
+  // draw the fading +points to the left of the big score (if active)
+  if (game.lastAdd && game.lastAdd.t < game.lastAdd.life){
+    const fade = Math.max(0, 1 - game.lastAdd.t / game.lastAdd.life);
+    const plus = (game.lastAdd.val >= 0 ? '+' : '') + String(game.lastAdd.val);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.font = '700 22px monospace';
+    ctx.fillStyle = '#ffd56b';
+    // position the plus slightly left of the main number
+    // measure main number width at the main font
+    ctx.font = '900 48px monospace';
+    const mainW = ctx.measureText(text).width;
+    ctx.font = '700 22px monospace';
+    const plusW = ctx.measureText(plus).width;
+    const px = - (mainW / 2) - plusW - 12;
+    ctx.fillText(plus, px, 0);
+    ctx.restore();
+  }
 
   ctx.font = '900 48px monospace';
   ctx.lineWidth = 6;
@@ -753,12 +1010,67 @@ function drawHighScore(){
   ctx.restore();
 }
 
+function drawLevelBanner(){
+  if (!game.levelBanner || game.levelBanner.t >= game.levelBanner.life) return;
+  const alpha = 1 - (game.levelBanner.t / game.levelBanner.life);
+  const level = game.levelBanner.level || 1;
+  const now = performance.now() / 1000;
+  // centered banner near top/center
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, alpha);
+  // subtle backdrop
+  ctx.fillStyle = 'rgba(6,8,14,0.7)';
+  const w = W * 0.9; const h = 110;
+  const x = (W - w) / 2; const y = H * 0.18;
+  ctx.fillRect(x, y, w, h);
+
+  // big level text
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '900 42px monospace';
+  ctx.fillStyle = '#ffd24d';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  const title = `Level ${level}`;
+  ctx.strokeText(title, W/2, y + 34);
+  ctx.fillText(title, W/2, y + 34);
+
+  // subtitle (omit for level 1)
+  if (level > 1) {
+    ctx.font = '600 14px monospace';
+    ctx.fillStyle = '#dfefff';
+    ctx.fillText('the meteors are getting faster...', W/2, y + 66);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 function drawHUD(){
+  // Score label + emphasized numeric score
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  const scoreLabel = 'Score:';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 12px monospace';
+  ctx.fillText(scoreLabel, 8, 18);
+  const labelW = ctx.measureText(scoreLabel + ' ').width;
+  ctx.font = '900 16px monospace';
+  ctx.fillStyle = '#ff4d4d';
+  ctx.fillText(String(game.score), 8 + labelW, 18);
+
+  // Best label beneath the score (with emphasized number)
+  const bestLabel = 'Best:';
+  ctx.font = '600 11px monospace';
+  ctx.fillStyle = '#eaf6ff';
+  ctx.fillText(bestLabel, 8, 30);
+  const bestLabelW = ctx.measureText(bestLabel + ' ').width;
+  ctx.font = '700 12px monospace';
+  ctx.fillStyle = '#ffdede';
+  ctx.fillText(String(game.best), 8 + bestLabelW, 30);
+
+  // draw hearts for lives (shifted down to make room for best)
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 12px monospace';
-  ctx.fillText(`Score ${game.score}`, 8, 18);
-  // draw hearts for lives
-  const heartY = 34;
+  const heartY = 46;
   const heartSize = 14;
   const spacing = 8;
   // shift hearts slightly left to remove awkward space
@@ -782,7 +1094,7 @@ function drawHUD(){
     ctx.restore();
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`Speed ${currentSpeed().toFixed(0)}px/s`, 8, 50);
+  ctx.fillText(`Speed ${currentSpeed().toFixed(0)}px/s`, 8, 62);
   // show level and timer inside the game canvas when a level is active
   if (game.level && typeof game.levelTimeRemaining === 'number'){
     const txt = `Level ${game.level}  ${Math.ceil(game.levelTimeRemaining)}s`;
@@ -795,6 +1107,8 @@ function drawHUD(){
 
 /* ——— Lowest comet must be cleared first (instant) ——— */
 function matchLowestCometIfAny(freq) {
+  // prevent matching while not in active play
+  if (!game.started || game.over) return false;
   if (game.comets.length === 0) return false;
 
   // find the lowest comet
@@ -822,14 +1136,8 @@ function matchLowestCometIfAny(freq) {
         const span = (typeof groundY !== 'undefined') ? Math.max(1, groundY - topY) : 700;
         const frac = Math.max(0, Math.min(1, ( (groundY - target.y) / span )) );
         const points = Math.floor(1 + frac * 9);
-        game.score += points;
-        // high score update + pop
-        if (game.score > game.best) {
-          game.best = game.score;
-          localStorage.setItem('dino_best', String(game.best));
-          game.hsPop = 1.0;
-        }
-      }catch(e){ game.score += 1; }
+        addScore(points);
+      }catch(e){ addScore(1); }
 
       game.comets.splice(idx, 1);
       game.lastHitAt = now;
@@ -854,6 +1162,12 @@ function step(ts){
     if (game.hsPop > 0) {
       game.hsPop = Math.max(0, game.hsPop - dt * 2.5);
     }
+
+      // score pop decay and lastAdd timer (for +x fade)
+      if (game.scorePop > 0) game.scorePop = Math.max(0, game.scorePop - dt * 2.5);
+      if (game.lastAdd && game.lastAdd.t < game.lastAdd.life) game.lastAdd.t += dt;
+      // level banner timer
+      if (game.levelBanner && game.levelBanner.t < game.levelBanner.life) game.levelBanner.t += dt;
 
       // heart pop decay (for lost-life pop animation)
       if (game.heartPops && game.heartPops.length) {
@@ -916,6 +1230,7 @@ function step(ts){
   updateParticles(dt);
   drawParticles();
   drawHighScore();   // big juicy number
+  drawLevelBanner();
   drawHUD();
 
   requestAnimationFrame(step);
