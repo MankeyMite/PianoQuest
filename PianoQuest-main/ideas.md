@@ -1,0 +1,1 @@
+add a mode for only sharp/flat notes, and a song in the background that fits with notes, so they feel like they are playing a song as well as learning, and the song is always changing, due to the RNG of the notes appearing. Learning while playing = fun. 

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+<title>Dino Comets – Mobile Pitch Game</title>
+  <!-- quick favicon to avoid 404; uses main menu image as a placeholder -->
+  <link rel="icon" href="Assets/Pictures/Main%20menu.png" type="image/png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div id="levelTimer" class="level-timer" style="margin-left:12px"></div>
+</header>
+
+<div class="wrap">
+  <div class="panel gameShell">
+    <canvas id="game" width="360" height="640" aria-label="game canvas"></canvas>
+    <div id="gameOverOverlay" class="game-over-overlay" style="display:none">
+      <div class="go-card">
+        <h2 class="go-title">Game Over!</h2>
+        <div class="go-score">Score: <span id="overlayScore">0</span></div>
+        <div class="go-best">Best: <span id="overlayBest">0</span></div>
+        <div class="go-buttons">
+          <button id="playAgainBtn" class="primary">Play again</button>
+          <button id="mainMenuBtn">Main menu</button>
+        </div>
+      </div>
+    </div>
+    <div id="mainMenuOverlay" class="menu-overlay" style="display:none">
+      <div class="menu-card">
+        <div class="menu-banner"><img src="Assets/Pictures/Main menu.png" alt="Main menu"></div>
+        <h2 class="menu-title">Main Menu</h2>
+        <!-- menu actions moved outside the card so they're visible over the full-screen banner -->
+
+        <div id="chooseModePanel" class="choose-panel" style="display:none">
+          <div class="modes-scroll" id="modesList">
+            <div class="mode-category">KEYBOARD IDENTIFICATION</div>
+            <div class="mode-item" data-mode="meteor-sky">
+              <div class="mode-thumb" style="background-image:url('Assets/Pictures/Meteor Sky.png'); background-size:cover; background-position:center;"></div>
+              <div class="mode-meta">
+                <div class="mode-name">Meteor sky</div>
+                <div class="mode-desc">Destroy the meteor notes before they destroy the planet!</div>
+              </div>
+            </div>
+            <div id="modeLevels" class="mode-levels" style="display:none">
+              <div class="levels-header">Levels</div>
+              <div id="levelsGrid" class="levels-grid"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="settingsPanel" class="choose-panel" style="display:none">
+          <div style="padding:6px">
+            <div style="margin-bottom:8px">Input source</div>
+            <select id="inputSelect" aria-label="input-select" style="width:100%; margin-bottom:8px">
+              <option value="mic">Microphone</option>
+              <option value="midi">MIDI keyboard</option>
+            </select>
+            <button id="btnMidi">Connect MIDI</button>
+            <div style="height:6px"></div>
+            <div id="permMsg"></div>
+            <div id="midiMsg" style="margin-top:6px; color:#bcd3ef"></div>
+            <div style="height:8px"></div>
+            <label style="display:flex; align-items:center; gap:8px; margin-top:6px">
+              <input id="musicToggle" type="checkbox"> Play menu music
+            </label>
+            <div style="height:8px"></div>
+            <label style="display:flex; align-items:center; gap:8px; align-items:center">
+              Volume
+              <input id="musicVolume" type="range" min="0" max="100" value="55" style="flex:1;">
+            </label>
+            <div style="height:8px"></div>
+            <div style="display:flex; gap:8px;">
+              <button id="settingsCloseBtn">Close</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+      </div>
+    </div>
+    <!-- floating actions visible over the banner (mode/settings) -->
+    <div class="menu-floating-actions" style="pointer-events:auto">
+      <button id="chooseModeBtn" class="primary">Choose mode</button>
+      <button id="settingsBtn">Settings</button>
+    </div>
+    <div id="readyOverlay" class="ready-overlay" style="display:none">
+      <div class="ready-card">
+        <div class="ready-title">Ready?</div>
+        <div class="ready-sub">click to start</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- controls panel removed (Input level, detected note, tolerances) -->
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>
