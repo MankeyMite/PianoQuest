@@ -653,6 +653,20 @@ function boot(){
       });
       ui.levelsGrid.appendChild(el);
     }
+    // add a Survival mode tile after the regular levels
+    const surv = document.createElement('div');
+    surv.className = 'level-item unlocked survival';
+    surv.textContent = 'Survival';
+    surv.dataset.level = 'survival';
+    surv.addEventListener('click', ()=>{
+      window.selectedLevel = 'survival';
+      try{ const key = 'meteor_survival_best'; game.best = Number(localStorage.getItem(key) || 0); }catch(e){}
+      if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
+      if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+      if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+      if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+    });
+    ui.levelsGrid.appendChild(surv);
   }
 
   // when level completes, unlock next and show menu
@@ -769,7 +783,18 @@ function boot(){
     }
     // show a short level banner when a specific level is started
     if (window.selectedLevel){
-      game.levelBanner = { t: 0, life: 2.0, level: Number(window.selectedLevel) };
+      if (window.selectedLevel === 'survival'){
+        game.survival = true;
+        game.level = null;
+        game.levelBanner = { t: 0, life: 2.0, level: 'Survival' };
+        try{ const key = 'meteor_survival_best'; game.best = Number(localStorage.getItem(key) || 0); }catch(e){}
+        // ensure base speed starts like level 1
+        game.baseSpeed = game.baseBaseSpeed;
+      } else {
+        const lvl = Number(window.selectedLevel) || 1;
+        game.level = lvl;
+        game.levelBanner = { t: 0, life: 2.0, level: Number(window.selectedLevel) };
+      }
     } else {
       game.levelBanner = null;
     }
@@ -928,13 +953,36 @@ function resetGame(){
   game.lastSpawn=0; game.speedFactor=1;
   game.spawnAccumulator = 0;
   game.nextSpawnTime = 0;
+  game.survival = false;
 }
 
 function showGameOver(){
   if (!ui || !ui.overlay) return;
+  // ensure overlay shows the losing state (reset any previous win title/styling)
+  try{
+    const titleEl = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
+    if (titleEl){ titleEl.textContent = 'Game Over!'; titleEl.style.color = '#ff6b6b'; }
+  }catch(e){}
   ui.overlay.style.display = 'flex';
   ui.overlayScore.textContent = String(game.score);
-  ui.overlayBest.textContent = String(game.best);
+  // if survival mode, update per-mode best
+  try{
+    if (game.survival){
+      const key = 'meteor_survival_best';
+      const prevBest = Number(localStorage.getItem(key) || 0);
+      const isNew = game.score > prevBest;
+      if (isNew) localStorage.setItem(key, String(game.score));
+      // badge
+      const existingBadge = ui.overlayScore && ui.overlayScore.parentElement && ui.overlayScore.parentElement.querySelector('.new-high');
+      if (existingBadge) existingBadge.remove();
+      if (isNew && ui.overlayScore && ui.overlayScore.parentElement){
+        const span = document.createElement('span'); span.className = 'new-high'; span.textContent = ' New high score!'; span.style.color = '#ff8c42'; span.style.fontWeight = '800'; span.style.marginLeft = '8px'; ui.overlayScore.parentElement.appendChild(span);
+      }
+      ui.overlayBest.textContent = String(Math.max(game.score, prevBest));
+    } else {
+      ui.overlayBest.textContent = String(game.best);
+    }
+  }catch(e){ ui.overlayBest.textContent = String(game.best); }
   // ensure the main menu button is visible in the Game Over popup
   if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
   // hide floating actions while Game Over is displayed; restore only when Main menu is pressed
@@ -1318,9 +1366,15 @@ function step(ts){
         }
       }
 
-    // during level mode, keep a constant speed; otherwise slowly ramp difficulty
+    // speed handling:
+    // - fixed for explicit levels
+    // - survival: start at baseBaseSpeed and increase by 1 px/s each second
+    // - otherwise (endless non-level mode): gentle percent ramp
     if (game.level) {
       game.speedFactor = 1;
+    } else if (game.survival) {
+      // want currentSpeed = baseBaseSpeed + 1 * time
+      game.speedFactor = (game.baseBaseSpeed + game.time) / game.baseBaseSpeed;
     } else {
       game.speedFactor = 1 + game.time * 0.02;
     }
@@ -1349,6 +1403,8 @@ function step(ts){
         levelComplete();
       }
     }
+    // if survival mode, hide level timer
+    if (game.survival){ if (ui.levelTimer) ui.levelTimer.style.display = 'none'; }
 
     const vy = currentSpeed();
     for (const c of game.comets) c.y += vy * dt;
