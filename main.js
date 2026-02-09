@@ -806,6 +806,7 @@ function boot(){
         }
       } else {
         ui.permMsg.textContent = 'Microphone already running.';
+        if (audio.running && !audio.updating){ lastTs = performance.now(); requestAnimationFrame(updateAudio); }
       }
     } else if (mode === 'midi'){
       // ensure MIDI is initialized and inform the user
@@ -1467,10 +1468,11 @@ function step(ts){
 }
 
 /* ------------------- Audio ------------------- */
-const audio = { ctx:null, analyser:null, data:null, running:false, sampleRate:48000 };
+const audio = { ctx:null, analyser:null, data:null, running:false, sampleRate:48000, updating:false, _raf:null };
 
 function updateAudio(){
-  if (!audio.running) return;
+  if (!audio.running) { audio.updating = false; return; }
+  audio.updating = true;
   audio.analyser.getFloatTimeDomainData(audio.data);
 
   let rms=0; for (let i=0;i<audio.data.length;i++){ const v=audio.data[i]; rms += v*v; }
@@ -1532,7 +1534,7 @@ function updateAudio(){
     game.detected = { freq: null, letter: null, cents: 0, db: Math.round(dbApprox) };
   }
 
-  requestAnimationFrame(updateAudio);
+  audio._raf = requestAnimationFrame(updateAudio);
 }
 
 /* ------------------- Boot ------------------- */
