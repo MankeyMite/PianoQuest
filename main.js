@@ -115,6 +115,7 @@ function boot(){
     calibSaveBtn: document.getElementById('calibSaveBtn'),
     calibCloseBtn: document.getElementById('calibCloseBtn'),
     calibMsg: document.getElementById('calibMsg'),
+    clearRecordsBtn: document.getElementById('clearRecordsBtn'),
   };
   // lightweight on-screen debug panel (created if missing) to show mapping info
   if (!document.getElementById('detDebug')){
@@ -148,6 +149,7 @@ function boot(){
       return null;
     }
     function playMenuMusic(){
+      if (ui.musicToggle && !ui.musicToggle.checked) return;
       const a = createMenuAudio(); if (!a) return;
       a.play().catch(e=>{ console.warn('menu music play failed', e); });
     }
@@ -168,7 +170,10 @@ function boot(){
       console.warn('game audio not available');
       return null;
     }
-    function playGameMusic(){ const a = createGameAudio(); if (!a) return; a.play().catch(e=>{ console.warn('game music play failed', e); }); }
+    function playGameMusic(){
+      if (ui.musicToggle && !ui.musicToggle.checked) return;
+      const a = createGameAudio(); if (!a) return; a.play().catch(e=>{ console.warn('game music play failed', e); });
+    }
     function stopGameMusic(){ if (ui._gameAudio) try{ ui._gameAudio.pause(); ui._gameAudio.currentTime = 0; }catch(e){} }
     // play crash sfx (creates transient Audio so multiple can overlap)
     function playCrashSfx(){
@@ -181,13 +186,23 @@ function boot(){
       }catch(e){ console.warn('crash sfx error', e); }
     }
   if (ui.a4) ui.a4.addEventListener('change', ()=>{ A4 = Number(ui.a4.value)||440; });
-  // music toggle persistence
+  // music toggle persistence (controls both menu and game music; preserves old key)
   if (ui.musicToggle){
-    ui.musicToggle.checked = localStorage.getItem('menu_music') !== 'off';
+    const saved = localStorage.getItem('music_enabled');
+    if (saved === null) ui.musicToggle.checked = localStorage.getItem('menu_music') !== 'off';
+    else ui.musicToggle.checked = saved !== 'off';
     ui.musicToggle.addEventListener('change', ()=>{
       const on = ui.musicToggle.checked;
-      localStorage.setItem('menu_music', on ? 'on' : 'off');
-      if (on) playMenuMusic(); else stopMenuMusic();
+      localStorage.setItem('music_enabled', on ? 'on' : 'off');
+      try{
+        if (on){
+          // if a game is running, prefer game music; else play menu music
+          if (typeof game !== 'undefined' && game.started && !game.over) playGameMusic();
+          else playMenuMusic();
+        } else {
+          stopGameMusic(); stopMenuMusic();
+        }
+      }catch(e){ try{ stopGameMusic(); stopMenuMusic(); }catch(_){} }
     });
   }
 
@@ -416,6 +431,23 @@ function boot(){
     if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.remove('show-card');
     if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
+  });
+
+  if (ui.clearRecordsBtn) ui.clearRecordsBtn.addEventListener('click', ()=>{
+    try{
+      if (!confirm('Clear all records? This will reset high scores and unlocked levels.')) return;
+      const keys = Object.keys(localStorage);
+      for (const k of keys){
+        if (k.startsWith('meteor_level_best_') || k === 'meteor_survival_best' || k === 'dino_best' || k === 'unlocked_level_meteor_sky'){
+          localStorage.removeItem(k);
+        }
+      }
+      // reset unlocked flag and in-memory values where possible
+      try{ localStorage.setItem('unlocked_level_meteor_sky', '1'); if (typeof unlockedLevel !== 'undefined') unlockedLevel = 1; }catch(e){}
+      try{ game.best = 0; if (ui.overlayBest) ui.overlayBest.textContent = '0'; }catch(e){}
+      try{ renderLevels(); }catch(e){}
+      if (ui.permMsg) ui.permMsg.textContent = 'Records cleared.';
+    }catch(e){ if (ui.permMsg) ui.permMsg.textContent = 'Failed to clear records.'; }
   });
 
   // Calibration persistence: apply saved tolerance if present
