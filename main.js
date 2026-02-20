@@ -376,7 +376,7 @@ function boot(){
                 color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
             }
             if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
-            nr.timerMax = Math.max(3, nr.timerMax - 0.5);
+            nr.timerMax = Math.max(2, nr.timerMax - 0.5);
             nrSpawnNote();
           }
           return;  // don't fall through to meteor-sky handler
@@ -1510,7 +1510,7 @@ function nrCheckMatch(freq){
         color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
     }
     if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
-    nr.timerMax = Math.max(3, nr.timerMax - 0.5);
+    nr.timerMax = Math.max(2, nr.timerMax - 0.5);
     nrSpawnNote();
     return true;
   }
@@ -1699,7 +1699,7 @@ function drawNRHUD(){
   ctx.textAlign='right';
   ctx.font='600 11px monospace'; ctx.fillStyle='#444444'; ctx.fillText('Round '+nr.round, W-8, 55);
   ctx.font='700 14px monospace';
-  ctx.fillStyle = nr.timerRemaining < 3 ? '#d9534f' : '#222222';
+  ctx.fillStyle = nr.timerRemaining < 2 ? '#d9534f' : '#222222';
   ctx.fillText(nr.timerRemaining.toFixed(1)+'s', W-8, 70);
   ctx.textAlign='left';
   // fading +points
