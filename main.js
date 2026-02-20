@@ -289,14 +289,20 @@ function boot(){
   ui.btnMidi.addEventListener('click', ()=>{ initMIDI(); });
   if (ui.playAgainBtn) ui.playAgainBtn.addEventListener('click', async ()=>{
     hideGameOver();
-    // restart the selected mode/level properly so timers and speeds reset
-    try { await startGame(); } catch(e){ console.warn('startGame failed on playAgain', e); }
-    game.over = false;
-    lastTs = performance.now();
+    if (window.currentMode === 'note-reading') {
+      try { await startNoteReading(); } catch(e){ console.warn('startNoteReading failed', e); }
+    } else {
+      // restart the selected mode/level properly so timers and speeds reset
+      try { await startGame(); } catch(e){ console.warn('startGame failed on playAgain', e); }
+      game.over = false;
+      lastTs = performance.now();
+    }
   });
   if (ui.mainMenuBtn) ui.mainMenuBtn.addEventListener('click', ()=>{
     // hide game over overlay and show the main menu (full-screen banner view)
     hideGameOver();
+    // reset note reading state when returning to menu
+    if (typeof nr !== 'undefined') { nr.active = false; nr.over = false; }
     if (ui.mainMenuOverlay) {
       ui.mainMenuOverlay.classList.remove('show-card');
       ui.mainMenuOverlay.style.display = 'flex';
@@ -328,7 +334,11 @@ function boot(){
       ui.readyOverlay.style.display = 'none';
       // trigger start flow directly
       stopMenuMusic();
-      startGame();
+      if (window.currentMode === 'note-reading') {
+        startNoteReading();
+      } else {
+        startGame();
+      }
     });
   }
 
@@ -345,6 +355,33 @@ function boot(){
         if (tag === 'INPUT' || tag === 'TEXTAREA' || (ev.target && ev.target.isContentEditable)) return;
         const k = (ev.key || '').toUpperCase();
         if (!/^[A-G]$/.test(k)) return;
+
+        // Note Reading mode: match by letter name only (octave doesn't matter)
+        if (nr.active && !nr.over && nr.currentNote) {
+          if (k === nr.currentNote.name) {
+            const elapsed = (performance.now() - nr.noteSpawnTime) / 1000;
+            const frac = Math.max(0, 1 - elapsed / nr.timerMax);
+            const points = Math.max(1, Math.ceil(10 * frac));
+            nr.score += points;
+            nr.lastPoints = points;
+            nr.flashCorrect = 1.0;
+            nr.scorePop = Math.min(2.5, 0.6 + Math.sqrt(points) * 0.18);
+            nr.lastAdd = { val: points, t: 0, life: 1.0 };
+            // particles
+            const nx = NR_NX, ny = nrY(nr.currentNote.staffPos);
+            for (let i = 0; i < 20; i++){
+              nr.particles.push({ x:nx+(Math.random()-.5)*10, y:ny+(Math.random()-.5)*10,
+                vx:(Math.random()*2-1)*80, vy:(Math.random()*2-1)*80,
+                life:0.5+Math.random()*0.5, t:0,
+                color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
+            }
+            if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
+            nr.timerMax = Math.max(3, nr.timerMax - 0.5);
+            nrSpawnNote();
+          }
+          return;  // don't fall through to meteor-sky handler
+        }
+
         if (ui && ui.status) ui.status.textContent = `Key ${k} pressed`;
         const hit = matchLowestByLetter(k);
         if (hit && ui && ui.status) {
@@ -359,6 +396,13 @@ function boot(){
       try{
         // hide game over overlay
         hideGameOver();
+        // note reading has no levels; go straight to main menu
+        if (window.currentMode === 'note-reading') {
+          if (typeof nr !== 'undefined') { nr.active = false; nr.over = false; }
+          if (ui.mainMenuOverlay) { ui.mainMenuOverlay.classList.remove('show-card'); ui.mainMenuOverlay.style.display = 'flex'; }
+          if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
+          return;
+        }
         // ensure overlay is visible (inline style may be 'none' from gameplay), then reveal the card
         if (ui.mainMenuOverlay) {
           ui.mainMenuOverlay.style.display = 'flex';
@@ -383,11 +427,21 @@ function boot(){
       it.addEventListener('click', async ()=>{
         const mode = it.dataset.mode || it.querySelector('.mode-name')?.textContent || 'meteor-sky';
         console.log('Selecting mode', mode);
+        window.currentMode = mode;
+
+        if (mode === 'note-reading') {
+          // Note reading has no levels; go straight to ready overlay
+          window.selectedLevel = null;
+          if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
+          if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+          if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+          if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+          return;
+        }
         // hide menu and panels
         // keep main menu open but reveal the levels panel for this mode
         if (ui.modeLevels) ui.modeLevels.style.display = 'block';
         if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'block';
-        window.currentMode = mode;
         // populate levels grid for the selected mode
         renderLevels();
       });
@@ -438,7 +492,7 @@ function boot(){
       if (!confirm('Clear all records? This will reset high scores and unlocked levels.')) return;
       const keys = Object.keys(localStorage);
       for (const k of keys){
-        if (k.startsWith('meteor_level_best_') || k === 'meteor_survival_best' || k === 'dino_best' || k === 'unlocked_level_meteor_sky'){
+        if (k.startsWith('meteor_level_best_') || k === 'meteor_survival_best' || k === 'dino_best' || k === 'unlocked_level_meteor_sky' || k === 'nr_best'){
           localStorage.removeItem(k);
         }
       }
@@ -1038,7 +1092,7 @@ function spawnComet(){
     x = margin + Math.random()*(W - margin*2);
     attempts++;
   }
-  const r = 10;
+  const r = 18;
   // use a fixed spawn Y so meteors appear from the same height (prevents apparent timing differences)
   const yStart = -60;
   game.comets.push({ x, y: yStart, r, note });
@@ -1136,9 +1190,9 @@ function drawComets(){
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const fontSize = Math.max(12, Math.round(c.r * 1.2));
+    const fontSize = Math.max(16, Math.round(c.r * 1.4));
     ctx.font = `bold ${fontSize}px monospace`;
-    ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.18));
+    ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.2));
     ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.fillStyle = '#ffffff';
     ctx.strokeText(c.note, c.x, c.y);
@@ -1370,11 +1424,414 @@ function matchLowestCometIfAny(freq) {
   return false;
 }
 
+/* ================ Note Reading Mini-Game ================ */
+// Note pool: A3 to C5 (naturals), staffPos relative to E4 (bottom line = 0)
+const NR_POOL = [
+  { midi:57, name:'A', octave:3, staffPos:-4 },
+  { midi:59, name:'B', octave:3, staffPos:-3 },
+  { midi:60, name:'C', octave:4, staffPos:-2 },
+  { midi:62, name:'D', octave:4, staffPos:-1 },
+  { midi:64, name:'E', octave:4, staffPos: 0 },
+  { midi:65, name:'F', octave:4, staffPos: 1 },
+  { midi:67, name:'G', octave:4, staffPos: 2 },
+  { midi:69, name:'A', octave:4, staffPos: 3 },
+  { midi:71, name:'B', octave:4, staffPos: 4 },
+  { midi:72, name:'C', octave:5, staffPos: 5 },
+];
+
+const nr = {
+  active: false, over: false,
+  score: 0,
+  best: Number(localStorage.getItem('nr_best') || 0),
+  round: 0,
+  currentNote: null,
+  timerMax: 15,
+  timerRemaining: 15,
+  noteSpawnTime: 0,
+  flashCorrect: 0,
+  lastPoints: 0,
+  scorePop: 0,
+  lastAdd: { val:0, t:10, life:0 },
+  particles: [],
+};
+
+// Staff layout
+const NR_SP   = 34;           // pixels between adjacent staff lines
+const NR_BOT  = 380;          // y of bottom line (E4, staffPos 0)
+const NR_LEFT = 30;
+const NR_RIGHT= 330;
+const NR_NX   = 220;          // x center for the note
+
+function nrY(pos){ return NR_BOT - pos * (NR_SP / 2); }
+
+function nrReset(){
+  nr.active = false; nr.over = false;
+  nr.score = 0; nr.round = 0;
+  nr.currentNote = null;
+  nr.timerMax = 15; nr.timerRemaining = 15;
+  nr.noteSpawnTime = 0;
+  nr.flashCorrect = 0; nr.lastPoints = 0;
+  nr.scorePop = 0;
+  nr.lastAdd = { val:0, t:10, life:0 };
+  nr.particles = [];
+  nr.best = Number(localStorage.getItem('nr_best') || 0);
+}
+
+function nrSpawnNote(){
+  let pick, attempts = 0;
+  do { pick = NR_POOL[Math.floor(Math.random() * NR_POOL.length)]; attempts++;
+  } while (nr.currentNote && pick.midi === nr.currentNote.midi && attempts < 20);
+  nr.currentNote = { ...pick };
+  nr.timerRemaining = nr.timerMax;
+  nr.noteSpawnTime = performance.now();
+  nr.round++;
+}
+
+function nrCheckMatch(freq){
+  if (!nr.active || nr.over || !nr.currentNote) return false;
+  const { midi } = nearestMidiNatural(freq);
+  const tol = ui.tol ? (Number(ui.tol.value) || 35) : 35;
+  const cents = centsOff(freq, midi);
+  if (midi === nr.currentNote.midi && Math.abs(cents) <= tol){
+    const elapsed = (performance.now() - nr.noteSpawnTime) / 1000;
+    const frac = Math.max(0, 1 - elapsed / nr.timerMax);
+    const points = Math.max(1, Math.ceil(10 * frac));
+    nr.score += points;
+    nr.lastPoints = points;
+    nr.flashCorrect = 1.0;
+    nr.scorePop = Math.min(2.5, 0.6 + Math.sqrt(points) * 0.18);
+    nr.lastAdd = { val: points, t: 0, life: 1.0 };
+    // particles
+    const nx = NR_NX, ny = nrY(nr.currentNote.staffPos);
+    for (let i = 0; i < 20; i++){
+      nr.particles.push({ x:nx+(Math.random()-.5)*10, y:ny+(Math.random()-.5)*10,
+        vx:(Math.random()*2-1)*80, vy:(Math.random()*2-1)*80,
+        life:0.5+Math.random()*0.5, t:0,
+        color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
+    }
+    if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
+    nr.timerMax = Math.max(3, nr.timerMax - 0.5);
+    nrSpawnNote();
+    return true;
+  }
+  return false;
+}
+
+function nrShowGameOver(){
+  nr.over = true;
+  const prev = Number(localStorage.getItem('nr_best') || 0);
+  const isNew = nr.score > prev;
+  if (isNew){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.score)); }
+  if (!ui || !ui.overlay) return;
+  const t = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
+  if (t){ t.textContent = 'Game Over!'; t.style.color = '#ff6b6b'; }
+  ui.overlay.style.display = 'flex';
+  if (ui.overlayScore) ui.overlayScore.textContent = String(nr.score);
+  if (ui.overlayBest) ui.overlayBest.textContent = String(Math.max(nr.score, prev));
+  const eb = ui.overlayScore && ui.overlayScore.parentElement && ui.overlayScore.parentElement.querySelector('.new-high');
+  if (eb) eb.remove();
+  if (isNew && ui.overlayScore && ui.overlayScore.parentElement){
+    const s = document.createElement('span'); s.className='new-high'; s.textContent=' New high score!';
+    s.style.color='#ff8c42'; s.style.fontWeight='800'; s.style.marginLeft='8px';
+    ui.overlayScore.parentElement.appendChild(s);
+  }
+  if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
+  if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
+  try{ stopGameMusic(); }catch(e){}
+}
+
+// -------- Drawing helpers for Note Reading --------
+function drawNRBg(){
+  // Vibrant gradient: warm yellow-gold top → sky-mint bottom
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+  bgGrad.addColorStop(0,   '#fffde4');   // creamy yellow
+  bgGrad.addColorStop(0.45,'#d4f5f5');   // light teal
+  bgGrad.addColorStop(1,   '#b2ebd4');   // soft mint
+  ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+
+  // Animated soft blobs/circles for visual interest
+  const t = performance.now() / 1000;
+  const blobs = [
+    { x: W*0.15, y: H*0.12, r: 68, hue: 50,  sat: 95, li: 82 },
+    { x: W*0.82, y: H*0.18, r: 54, hue: 185, sat: 80, li: 82 },
+    { x: W*0.72, y: H*0.70, r: 72, hue: 160, sat: 80, li: 82 },
+    { x: W*0.20, y: H*0.75, r: 50, hue: 42,  sat: 90, li: 85 },
+    { x: W*0.50, y: H*0.90, r: 60, hue: 200, sat: 75, li: 85 },
+  ];
+  for (const b of blobs){
+    const ox = Math.sin(t * 0.4 + b.hue) * 14;
+    const oy = Math.cos(t * 0.3 + b.sat) * 12;
+    const gr = ctx.createRadialGradient(b.x+ox, b.y+oy, 0, b.x+ox, b.y+oy, b.r);
+    gr.addColorStop(0,   `hsla(${b.hue},${b.sat}%,${b.li}%,0.55)`);
+    gr.addColorStop(1,   `hsla(${b.hue},${b.sat}%,${b.li}%,0)`);
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(b.x+ox, b.y+oy, b.r, 0, Math.PI*2); ctx.fill();
+  }
+
+}
+
+function drawNRStaff(){
+  ctx.strokeStyle = '#222222'; ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i++){
+    const y = NR_BOT - i * NR_SP;
+    ctx.beginPath(); ctx.moveTo(NR_LEFT, y); ctx.lineTo(NR_RIGHT, y); ctx.stroke();
+  }
+}
+
+function drawTrebleClef(cx, gY, sp){
+  // Draw treble clef image (if available) and align it to the staff's G-line.
+  // The image file should be placed at Assets/Pictures/treble-clef.png
+  if (!drawTrebleClef.img){
+    const im = new Image();
+    im.src = 'Assets/Pictures/treble-clef.png';
+    drawTrebleClef.img = im;
+    // no need to await; drawing will occur on next frames once loaded
+  }
+  const img = drawTrebleClef.img;
+  if (!img) return;
+
+  // Desired height should cover the staff area (approx 4.8 lines)
+  const desiredHeight = sp * 4.8;
+  // Determine aspect ratio if loaded; otherwise assume a tall glyph
+  const aspect = (img.naturalWidth && img.naturalHeight) ? (img.naturalWidth / img.naturalHeight) : 0.45;
+  const desiredWidth = desiredHeight * aspect;
+
+  // We want the curl of the clef to sit on the G line (gY).
+  // Reduce the offset so the clef sits higher on the staff.
+  const curlOffset = 0.58 * desiredHeight;
+
+  // Position the image slightly left of cx so it sits over the left staff margin
+  const x = cx - desiredWidth * 0.45;
+  const y = gY - curlOffset;
+
+  if (img.complete && img.naturalHeight){
+    ctx.drawImage(img, x, y, desiredWidth, desiredHeight);
+  }
+}
+
+function drawNoteOnStaff(note){
+  if (!note) return;
+  const ny = nrY(note.staffPos), nx = NR_NX, sp = NR_SP;
+  // ledger lines for notes below / above the staff
+  ctx.strokeStyle = '#222222'; ctx.lineWidth = 2;
+  const lw = sp * 1.6;
+  // Below staff: middle-C (staffPos -2) and lower need ledger lines at even positions
+  if (note.staffPos <= -1){
+    // Draw ledger lines at each even staffPos from -2 down to the note
+    for (let p = -2; p >= note.staffPos; p -= 2){
+      const ly = nrY(p);
+      ctx.beginPath(); ctx.moveTo(nx - lw/2, ly); ctx.lineTo(nx + lw/2, ly); ctx.stroke();
+    }
+  }
+  // Above staff: above the top line (staffPos 8) need ledger lines at even positions
+  if (note.staffPos >= 10){
+    for (let p = 10; p <= note.staffPos; p += 2){
+      const ly = nrY(p);
+      ctx.beginPath(); ctx.moveTo(nx - lw/2, ly); ctx.lineTo(nx + lw/2, ly); ctx.stroke();
+    }
+  }
+  // correct-hit glow
+  if (nr.flashCorrect > 0){
+    ctx.save(); ctx.globalAlpha = 0.55 * nr.flashCorrect;
+    const gr = sp * (1.2 + nr.flashCorrect);
+    const gl = ctx.createRadialGradient(nx, ny, 0, nx, ny, gr);
+    gl.addColorStop(0,'#d1f7d6'); gl.addColorStop(1,'rgba(209,247,214,0)');
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(nx, ny, gr, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  // note head (filled ellipse) — black for high contrast on light bg
+  const hw = sp * 0.48, hh = sp * 0.36;
+  ctx.save();
+  ctx.translate(nx, ny);
+  ctx.rotate(-0.2);  // slight tilt like real notation
+  ctx.beginPath();
+  ctx.ellipse(0, 0, hw, hh, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#111111';
+  ctx.fill();
+  ctx.strokeStyle = '#111111';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+  // stem
+  const stemH = sp * 2.8;
+  ctx.strokeStyle = '#111111'; ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  if (note.staffPos >= 4){
+    // stem goes down from left side of note
+    ctx.moveTo(nx - hw + 2, ny); ctx.lineTo(nx - hw + 2, ny + stemH);
+  } else {
+    // stem goes up from right side of note
+    ctx.moveTo(nx + hw - 2, ny); ctx.lineTo(nx + hw - 2, ny - stemH);
+  }
+  ctx.stroke();
+}
+
+function drawNRTimerBar(frac){
+  const bx = 20, by = 18, bw = W - 40, bh = 14, br = 7;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; roundRect(ctx, bx, by, bw, bh, br, true, false);
+  const fw = Math.max(0, bw * frac);
+  if (fw > 0){
+    let col;
+    if (frac > 0.5){ const t=(frac-0.5)*2; col=`rgb(${Math.round(255*(1-t))},220,60)`; }
+    else { const t=frac*2; col=`rgb(255,${Math.round(180*t+40)},50)`; }
+    ctx.save(); ctx.beginPath(); roundRect(ctx, bx, by, bw, bh, br, false, false); ctx.clip();
+    ctx.fillStyle = col; ctx.fillRect(bx, by, fw, bh); ctx.restore();
+    if (frac < 0.25){
+      const pulse = 0.3 + 0.3 * Math.sin(performance.now() / 150);
+      ctx.save(); ctx.globalAlpha = pulse;
+      ctx.strokeStyle = frac < 0.1 ? '#ff3333' : '#ff6633'; ctx.lineWidth = 2;
+      roundRect(ctx, bx, by, bw, bh, br, false, true); ctx.restore();
+    }
+  }
+}
+
+function drawNRHUD(){
+  // Score (dark text for light background)
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.font='600 13px monospace'; ctx.fillStyle='#444444'; ctx.fillText('Score:',8,55);
+  const slw=ctx.measureText('Score: ').width;
+  ctx.font='900 18px monospace'; ctx.fillStyle='#111111'; ctx.fillText(String(nr.score),8+slw,55);
+  // Best
+  ctx.font='600 11px monospace'; ctx.fillStyle='#555555'; ctx.fillText('Best:',8,70);
+  const blw=ctx.measureText('Best: ').width;
+  ctx.font='700 12px monospace'; ctx.fillStyle='#222222'; ctx.fillText(String(nr.best),8+blw,70);
+  // Round & timer
+  ctx.textAlign='right';
+  ctx.font='600 11px monospace'; ctx.fillStyle='#444444'; ctx.fillText('Round '+nr.round, W-8, 55);
+  ctx.font='700 14px monospace';
+  ctx.fillStyle = nr.timerRemaining < 3 ? '#d9534f' : '#222222';
+  ctx.fillText(nr.timerRemaining.toFixed(1)+'s', W-8, 70);
+  ctx.textAlign='left';
+  // fading +points
+  if (nr.lastAdd && nr.lastAdd.t < nr.lastAdd.life){
+    const fade = Math.max(0,1-nr.lastAdd.t/nr.lastAdd.life);
+    const rise = nr.lastAdd.t * 30;
+    ctx.save(); ctx.globalAlpha=fade; ctx.font='900 28px monospace';
+    ctx.textAlign='center'; ctx.fillStyle='#4ade80';
+    ctx.fillText('+'+nr.lastAdd.val, W/2, 130 - rise); ctx.restore();
+  }
+  // big center score
+  if (nr.score > 0 || nr.scorePop > 0){
+    const txt = String(nr.score), sy = H - 80;
+    const sc = 1 + 0.35*(nr.scorePop||0);
+    ctx.save(); ctx.translate(W/2,sy); ctx.scale(sc,sc);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='900 40px monospace'; ctx.lineWidth=4;
+    ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.strokeText(txt,0,0);
+    ctx.fillStyle='#f0e6d0'; ctx.fillText(txt,0,0); ctx.restore();
+  }
+  // detection indicator (subtle on light bg)
+  ctx.save();
+  const dbW=160, dbH=30, dbx=(W-dbW)/2, dby=H-dbH-10;
+  ctx.fillStyle='rgba(0,0,0,0.06)'; roundRect(ctx, dbx, dby, dbW, dbH, 6, true, false);
+  ctx.fillStyle='#222222'; ctx.font='700 13px monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const det = game.detected && game.detected.letter
+    ? game.detected.letter + ' (' + game.detected.db + ' dB)'
+    : 'Listening...';
+  ctx.fillText(det, dbx+dbW/2, dby+dbH/2); ctx.restore();
+}
+
+function stepNoteReading(dt){
+  drawNRBg();
+  drawNRStaff();
+  const gLineY = NR_BOT - NR_SP; // G4 = 2nd line from bottom
+  drawTrebleClef(NR_LEFT + 38, gLineY, NR_SP);
+
+  // Debug: always show state at bottom of canvas
+  ctx.save(); ctx.fillStyle='#ff0'; ctx.font='bold 11px monospace'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillText('active='+nr.active+' over='+nr.over+' note='+(nr.currentNote ? nr.currentNote.name+nr.currentNote.octave+' pos='+nr.currentNote.staffPos : 'null'), 4, H-4);
+  ctx.restore();
+
+  if (nr.active && !nr.over){
+    nr.timerRemaining -= dt;
+    if (nr.timerRemaining <= 0){ nr.timerRemaining = 0; nrShowGameOver(); }
+    if (nr.flashCorrect > 0) nr.flashCorrect = Math.max(0, nr.flashCorrect - dt*3);
+    if (nr.scorePop > 0) nr.scorePop = Math.max(0, nr.scorePop - dt*2.5);
+    if (nr.lastAdd && nr.lastAdd.t < nr.lastAdd.life) nr.lastAdd.t += dt;
+    // Draw the note
+    if (nr.currentNote){
+      try {
+        drawNoteOnStaff(nr.currentNote);
+      } catch(e) {
+        console.error('drawNoteOnStaff error:', e);
+        ctx.save(); ctx.fillStyle='#ff0000'; ctx.font='bold 16px monospace';
+        ctx.textAlign='center'; ctx.fillText('ERR:'+e.message, W/2, H/2); ctx.restore();
+      }
+    } else {
+      ctx.save(); ctx.fillStyle='#ff0000'; ctx.font='bold 20px monospace';
+      ctx.textAlign='center'; ctx.fillText('No note!', W/2, H/2); ctx.restore();
+    }
+    // particles
+    for (let p of nr.particles){ p.t+=dt; p.x+=p.vx*dt; p.vy+=30*dt; p.y+=p.vy*dt; }
+    nr.particles = nr.particles.filter(p => p.t < p.life);
+    for (const p of nr.particles){
+      ctx.globalAlpha = Math.max(0,1-p.t/p.life);
+      ctx.fillStyle = p.color; ctx.fillRect(p.x|0, p.y|0, 3, 3);
+    }
+    ctx.globalAlpha = 1;
+  } else if (nr.over){
+    if (nr.currentNote) {
+      ctx.save(); ctx.globalAlpha=0.3; drawNoteOnStaff(nr.currentNote); ctx.restore();
+    }
+  } else {
+    ctx.save(); ctx.fillStyle='#ffff00'; ctx.font='bold 16px monospace';
+    ctx.textAlign='center'; ctx.fillText('active:'+nr.active+' over:'+nr.over, W/2, H/2 - 20); ctx.restore();
+  }
+
+  drawNRTimerBar(nr.timerMax > 0 ? nr.timerRemaining / nr.timerMax : 0);
+  drawNRHUD();
+}
+
+async function startNoteReading(){
+  nrReset(); nr.active = true;
+  // hide any overlays from previous games
+  if (ui.overlay) ui.overlay.style.display = 'none';
+  if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
+  // spawn first note immediately (before async mic setup)
+  nrSpawnNote();
+  console.log('NR started, note:', nr.currentNote, 'active:', nr.active);
+  // ensure mic running
+  if (!audio.running){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia(
+        { audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }});
+      if (!audio.ctx) audio.ctx = new (window.AudioContext||window.webkitAudioContext)();
+      const src = audio.ctx.createMediaStreamSource(stream);
+      audio.analyser = audio.ctx.createAnalyser();
+      audio.analyser.fftSize = 2048; audio.analyser.smoothingTimeConstant = 0;
+      audio.sampleRate = audio.ctx.sampleRate;
+      audio.data = new Float32Array(audio.analyser.fftSize);
+      src.connect(audio.analyser); audio.running = true;
+      if (ui.permMsg) ui.permMsg.textContent = 'Microphone running.';
+    } catch(e){
+      console.error(e);
+      if (ui.permMsg) ui.permMsg.textContent = 'Microphone permission denied.';
+      return;
+    }
+  }
+  if (!audio.updating){ lastTs = performance.now(); requestAnimationFrame(updateAudio); }
+  try{ stopMenuMusic(); }catch(e){}
+  try{ stopGameMusic(); }catch(e){}
+  if (ui.levelTimer) ui.levelTimer.style.display = 'none';
+}
+
 /* ------------------- Game loop ------------------- */
 let lastTs = 0;
 function step(ts){
   const dt = Math.min(0.033, (ts - lastTs)/1000 || 0.016);
   lastTs = ts;
+
+  // Branch: Note Reading mode — always render the Note Reading screen when selected
+  if (window.currentMode === 'note-reading'){
+    try { stepNoteReading(dt); } catch(e) {
+      console.error('stepNoteReading crashed:', e);
+      ctx.save(); ctx.fillStyle='red'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+      ctx.fillText('RENDER ERROR: '+e.message, W/2, H/2+40); ctx.restore();
+    }
+    requestAnimationFrame(step);
+    return;
+  }
 
   drawBackground();
 
@@ -1520,7 +1977,11 @@ function updateAudio(){
       try{ console.debug('pitch-detect', {freq: res.freq.toFixed(2), A4, midiFloat: m.toFixed(3), midiRounded: Math.round(m), midiName: name, nearestNatural: near, db: Math.round(dbApprox), stableStart: game._stable.start}); }catch(e){}
       // Only match when the detection has been stable long enough
       if (game._stable.start && (now - game._stable.start) >= 100){
-        matchLowestCometIfAny(res.freq);
+        if (nr.active && !nr.over){
+          nrCheckMatch(res.freq);
+        } else {
+          matchLowestCometIfAny(res.freq);
+        }
       }
     } else {
       // below threshold: show weak reading but do not match and reset stability
