@@ -652,17 +652,15 @@ function boot(){
   function matchLowestByLetter(letter){
     // don't allow matching when the game isn't actively running (or after game over)
     if (!game.started || game.over) return false;
-    if (game.comets.length === 0) return false;
-    let idx = 0, maxY = -Infinity;
-    for (let i = 0; i < game.comets.length; i++){
-      if (game.comets[i].y > maxY){ maxY = game.comets[i].y; idx = i; }
-    }
+    const idx = lowestCometIndex();
+    if (idx < 0) return false;
     const target = game.comets[idx];
     const plain = letter.replace('#','');
     if (plain === target.note){
       const now = performance.now();
       if (now - game.lastHitAt > 120){
         // stronger shatter effect for MIDI hits
+        fireShipBeam(target);
         explodeAt(target.x, target.y, target.note);
         for (let i=0;i<12;i++){ explodeAt(target.x + (Math.random()-0.5)*10, target.y + (Math.random()-0.5)*10, target.note); }
         // score based on height: top->10, ground->1 (floor)
@@ -779,6 +777,7 @@ function boot(){
 
   function stopActivePlayWithoutReward(){
     finishProfileRun({ score: getCurrentRunScore(), awardCoins: false });
+    clearPlanetExplosion();
     game.started = false;
     game.over = false;
     game.comets.length = 0;
@@ -1419,7 +1418,11 @@ function boot(){
   /* ------------------- Canvas / Game ------------------- */
   const ctx = ui.canvas.getContext('2d');
   const W = ui.canvas.width, H = ui.canvas.height;
-  const groundY = H - 40;
+  const groundY = H - 74;
+  const shipRestY = groundY + 32;
+  const planetExplosionDuration = 1.05;
+  const spaceshipImg = new Image();
+  spaceshipImg.src = 'Assets/Pictures/PianoQuest Spaceship transparent.png';
 
   // Starfield and aurora state
   let stars = [];
@@ -1521,6 +1524,8 @@ const game = {
   livesMax: 3,
   heartPops: [],
   comets:[], particles:[],
+  ship: { x: W/2, y: shipRestY, beam:null },
+  planetExplosion: { active:false, t:0, duration:0 },
   lastSpawn:0,
   baseSpeed: 30,
   speedFactor: 1,
@@ -1550,14 +1555,79 @@ function resetGame(){
   game.lives = game.livesMax;
   game.heartPops = new Array(game.livesMax).fill(0);
   game.comets.length=0; game.particles.length=0;
+  game.ship.x = W/2;
+  game.ship.y = shipRestY;
+  game.ship.beam = null;
+  game.planetExplosion = { active:false, t:0, duration:0 };
   game.lastSpawn=0; game.speedFactor=1;
   game.spawnAccumulator = 0;
   game.nextSpawnTime = 0;
   game.survival = false;
 }
 
+function clearPlanetExplosion(){
+  game.planetExplosion = { active:false, t:0, duration:0 };
+}
+
+function startPlanetExplosion(){
+  if (game.planetExplosion && game.planetExplosion.active) return;
+  game.over = true;
+  game.ship.beam = null;
+  game.planetExplosion = { active:true, t:0, duration:planetExplosionDuration };
+  setInGameActionsVisible(false);
+  try{ stopGameMusic(); }catch(e){}
+  for (let i=0;i<10;i++){
+    explodeAt(Math.random() * W, groundY - Math.random() * 18, NATURAL_POOL[i % NATURAL_POOL.length]);
+  }
+}
+
+function tickPlanetExplosion(dt){
+  if (!game.planetExplosion || !game.planetExplosion.active) return;
+  game.planetExplosion.t += dt;
+}
+
+function planetExplosionFrame(){
+  const fx = game.planetExplosion;
+  if (!fx || !fx.active) return { active:false, shakeX:0, shakeY:0, white:0, p:0 };
+  const p = Math.max(0, Math.min(1, fx.t / Math.max(0.001, fx.duration)));
+  const shake = (1 - p * 0.35) * (6 + 14 * Math.sin(Math.PI * Math.min(1, p * 1.05)));
+  const white = Math.max(0, Math.min(1, (p - 0.22) / 0.48));
+  return {
+    active:true,
+    shakeX:(Math.random() * 2 - 1) * shake,
+    shakeY:(Math.random() * 2 - 1) * shake,
+    white,
+    p
+  };
+}
+
+function drawPlanetExplosion(fx){
+  if (!fx || !fx.active) return;
+  const blast = Math.max(0, 1 - fx.p);
+  ctx.save();
+  const grad = ctx.createRadialGradient(W/2, groundY, 8, W/2, groundY, H * 0.9);
+  grad.addColorStop(0, `rgba(255,246,166,${0.85 * blast})`);
+  grad.addColorStop(0.32, `rgba(255,118,45,${0.45 * blast})`);
+  grad.addColorStop(1, 'rgba(255,118,45,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  if (fx.white > 0){
+    ctx.fillStyle = `rgba(255,255,255,${fx.white})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.restore();
+}
+
+function finishPlanetExplosionIfReady(){
+  const fx = game.planetExplosion;
+  if (!fx || !fx.active || fx.t < fx.duration) return;
+  clearPlanetExplosion();
+  showGameOver();
+}
+
 function showGameOver(){
   if (!ui || !ui.overlay) return;
+  clearPlanetExplosion();
   // ensure overlay shows the losing state (reset any previous win title/styling)
   try{
     const titleEl = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
@@ -1594,6 +1664,7 @@ function showGameOver(){
 
 function hideGameOver(){
   if (!ui || !ui.overlay) return;
+  clearPlanetExplosion();
   ui.overlay.style.display = 'none';
   resetCoinReward();
 }
@@ -1615,6 +1686,41 @@ function spawnComet(){
   game.lastSpawnX = x;
 }
 
+function lowestCometIndex(){
+  if (game.comets.length === 0) return -1;
+  let idx = 0, maxY = -Infinity;
+  for (let i = 0; i < game.comets.length; i++){
+    if (game.comets[i].y > maxY){ maxY = game.comets[i].y; idx = i; }
+  }
+  return idx;
+}
+
+function currentTargetComet(){
+  const idx = lowestCometIndex();
+  return idx >= 0 ? game.comets[idx] : null;
+}
+
+function alignShipToCurrentTarget(){
+  const target = currentTargetComet();
+  game.ship.x = target ? target.x : W/2;
+  game.ship.y = shipRestY;
+  return target;
+}
+
+function fireShipBeam(target){
+  if (!target) return;
+  game.ship.x = target.x;
+  game.ship.y = shipRestY;
+  const originY = groundY - 6;
+  game.ship.beam = {
+    x: target.x,
+    y1: originY,
+    y2: Math.min(target.y, originY - 8),
+    t: 0,
+    life: 0.14
+  };
+}
+
 function explodeAt(x,y,note){
   const plain = (note || '').replace('#','');
   const palette = NOTE_PALETTES[plain] || ['#ffde7a','#ffa36b'];
@@ -1631,6 +1737,12 @@ function explodeAt(x,y,note){
       color: c
     });
   }
+}
+
+function updateShipEffects(dt){
+  if (!game.ship.beam) return;
+  game.ship.beam.t += dt;
+  if (game.ship.beam.t >= game.ship.beam.life) game.ship.beam = null;
 }
 
 // Centralized scoring helper so we can animate score pops and handle high-score logic.
@@ -1726,6 +1838,53 @@ function drawParticles(){
     ctx.fillRect(p.x|0, p.y|0, 2, 2);
     ctx.globalAlpha = 1;
   }
+}
+
+function drawSpaceship(){
+  if (!game.started || (game.over && !(game.planetExplosion && game.planetExplosion.active))) return;
+  const target = alignShipToCurrentTarget();
+  const ship = game.ship;
+  const beam = ship.beam;
+
+  if (beam){
+    const a = Math.max(0, 1 - beam.t / beam.life);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(125,225,255,0.28)';
+    ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.moveTo(beam.x, beam.y1); ctx.lineTo(beam.x, beam.y2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(beam.x, beam.y1); ctx.lineTo(beam.x, beam.y2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,242,120,0.9)';
+    ctx.beginPath(); ctx.arc(beam.x, beam.y2, 8 + 8 * a, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  const shipW = 58;
+  const shipH = 58;
+  ctx.save();
+  if (target){
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = '#7be1ff';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath(); ctx.moveTo(ship.x, groundY - 4); ctx.lineTo(ship.x, Math.max(24, target.y - target.r)); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  if (spaceshipImg.complete && spaceshipImg.naturalWidth){
+    ctx.drawImage(spaceshipImg, ship.x - shipW/2, ship.y - shipH/2, shipW, shipH);
+  } else {
+    ctx.fillStyle = '#7be1ff';
+    ctx.beginPath();
+    ctx.moveTo(ship.x, ship.y - 28);
+    ctx.lineTo(ship.x - 24, ship.y + 20);
+    ctx.lineTo(ship.x + 24, ship.y + 20);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 /* ===== Big, juicy high score number ===== */
@@ -1882,7 +2041,7 @@ function drawHUD(){
     }
     // small rounded rect with detected note
     ctx.save();
-    const boxW = 160, boxH = 34; const bx = (W - boxW)/2; const by = H - boxH - 8;
+    const boxW = 160, boxH = 34; const bx = (W - boxW)/2; const by = groundY - boxH - 8;
     ctx.fillStyle = 'rgba(6,8,14,0.6)';
     roundRect(ctx, bx, by, boxW, boxH, 8, true, false);
     ctx.fillStyle = '#eaf6ff'; ctx.font = '700 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1905,13 +2064,8 @@ function roundRect(ctx, x, y, w, h, r, fill, stroke){
 function matchLowestCometIfAny(freq) {
   // prevent matching while not in active play
   if (!game.started || game.over) return false;
-  if (game.comets.length === 0) return false;
-
-  // find the lowest comet
-  let idx = 0, maxY = -Infinity;
-  for (let i = 0; i < game.comets.length; i++) {
-    if (game.comets[i].y > maxY) { maxY = game.comets[i].y; idx = i; }
-  }
+  const idx = lowestCometIndex();
+  if (idx < 0) return false;
 
   const target = game.comets[idx];
   const tol = ui.tol ? (Number(ui.tol.value) || 35) : 35;
@@ -1924,6 +2078,7 @@ function matchLowestCometIfAny(freq) {
   if (letter.replace('#','') === target.note && Math.abs(cents) <= tol) {
     const now = performance.now();
     if (now - game.lastHitAt > 120) {
+      fireShipBeam(target);
       explodeAt(target.x, target.y, target.note);
 
       // score based on height: top->10, ground->1 (floor)
@@ -2335,6 +2490,11 @@ function step(ts){
     return;
   }
 
+  tickPlanetExplosion(dt);
+  const planetFx = planetExplosionFrame();
+
+  ctx.save();
+  if (planetFx.active) ctx.translate(planetFx.shakeX, planetFx.shakeY);
   drawBackground();
 
   if (game.started && !game.over){
@@ -2404,24 +2564,29 @@ function step(ts){
     for (let i = game.comets.length - 1; i >= 0; i--){
       const c = game.comets[i];
       if (c.y >= groundY - c.r){
-      explodeAt(c.x, groundY-3, c.note);
+        explodeAt(c.x, groundY-3, c.note);
         try{ playCrashSfx(); }catch(e){}
         game.comets.splice(i,1);
         // trigger heart pop animation for the life that will be lost
         const losingIndex = Math.max(0, game.lives - 1);
         if (game.heartPops && game.heartPops[losingIndex] !== undefined) game.heartPops[losingIndex] = 1.0;
         game.lives -= 1;
-        if (game.lives <= 0) { game.over = true; showGameOver(); break; }
+        if (game.lives <= 0) { startPlanetExplosion(); break; }
       }
     }
   }
 
   drawComets();
   updateParticles(dt);
+  updateShipEffects(dt);
   drawParticles();
+  drawSpaceship();
   drawHighScore();   // big juicy number
   drawLevelBanner();
   drawHUD();
+  ctx.restore();
+  drawPlanetExplosion(planetFx);
+  finishPlanetExplosionIfReady();
 
   requestAnimationFrame(step);
 }
