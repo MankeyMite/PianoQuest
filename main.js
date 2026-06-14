@@ -68,6 +68,7 @@ let ui = null;
 function boot(){
   ui = {
     btnMidi: document.getElementById('btnMidi'),
+    restartMicBtn: document.getElementById('restartMicBtn'),
     inputSelect: document.getElementById('inputSelect'),
     permMsg: document.getElementById('permMsg'),
     midiMsg: document.getElementById('midiMsg'),
@@ -87,8 +88,10 @@ function boot(){
     mainMenuBtn: document.getElementById('mainMenuBtn'),
     mainMenuOverlay: document.getElementById('mainMenuOverlay'),
     chooseModeBtn: document.getElementById('chooseModeBtn'),
+    profileBtn: document.getElementById('profileBtn'),
     settingsBtn: document.getElementById('settingsBtn'),
     chooseModePanel: document.getElementById('chooseModePanel'),
+    profilePanel: document.getElementById('profilePanel'),
     modesList: document.getElementById('modesList'),
     settingsPanel: document.getElementById('settingsPanel'),
     backBtn: document.getElementById('backBtn'),
@@ -116,21 +119,355 @@ function boot(){
     calibCloseBtn: document.getElementById('calibCloseBtn'),
     calibMsg: document.getElementById('calibMsg'),
     clearRecordsBtn: document.getElementById('clearRecordsBtn'),
+    activeProfileName: document.getElementById('activeProfileName'),
+    profileCoins: document.getElementById('profileCoins'),
+    profileNameInput: document.getElementById('profileNameInput'),
+    createProfileBtn: document.getElementById('createProfileBtn'),
+    profileList: document.getElementById('profileList'),
+    profileUnlockedCount: document.getElementById('profileUnlockedCount'),
+    profileCompletedCount: document.getElementById('profileCompletedCount'),
+    profileMeteorTime: document.getElementById('profileMeteorTime'),
+    profileNoteTime: document.getElementById('profileNoteTime'),
+    profileSurvivalBest: document.getElementById('profileSurvivalBest'),
+    profileNoteBest: document.getElementById('profileNoteBest'),
+    profileLevelBests: document.getElementById('profileLevelBests'),
+    deleteProfileBtn: document.getElementById('deleteProfileBtn'),
+    profileCloseBtn: document.getElementById('profileCloseBtn'),
+    profileMsg: document.getElementById('profileMsg'),
   };
-  // lightweight on-screen debug panel (created if missing) to show mapping info
-  if (!document.getElementById('detDebug')){
-    const dd = document.createElement('div');
-    dd.id = 'detDebug';
-    dd.style.position = 'fixed'; dd.style.right = '12px'; dd.style.bottom = '12px';
-    dd.style.padding = '8px 10px'; dd.style.background = 'rgba(0,0,0,0.6)'; dd.style.color = '#fff';
-    dd.style.fontFamily = 'monospace'; dd.style.fontSize = '12px'; dd.style.borderRadius = '6px'; dd.style.zIndex = 9999;
-    dd.style.maxWidth = '320px'; dd.style.whiteSpace = 'pre-wrap';
-    dd.textContent = 'detDebug ready';
-    document.body.appendChild(dd);
-  }
-  ui.detDebug = document.getElementById('detDebug');
   // expose for legacy functions and console debugging
   window.ui = ui;
+
+  /* ------------------- Local profiles ------------------- */
+  const PROFILE_STORE_KEY = 'pq_profiles_v1';
+  const ACTIVE_PROFILE_KEY = 'pq_active_profile_id';
+  const PROFILE_MIGRATED_KEY = 'pq_profiles_legacy_migrated_v1';
+  const PROFILE_MAX_LEVELS = 10;
+  let profileStore = null;
+  let activeProfile = null;
+  let activeRun = null;
+  let unlockedLevel = 1;
+
+  function defaultProfileStats(){
+    return {
+      coins: 0,
+      unlockedLevel: 1,
+      levelsCompleted: {},
+      meteorLevelBest: {},
+      meteorSurvivalBest: 0,
+      meteorBest: 0,
+      noteReadingBest: 0,
+      playMs: { meteorSky: 0, noteReading: 0 },
+      gamesPlayed: { meteorSky: 0, noteReading: 0 },
+      totalScore: { meteorSky: 0, noteReading: 0 }
+    };
+  }
+
+  function makeProfile(name, id){
+    const now = Date.now();
+    return {
+      id: id || `profile_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+      name: cleanProfileName(name) || 'Player 1',
+      createdAt: now,
+      updatedAt: now,
+      stats: defaultProfileStats()
+    };
+  }
+
+  function cleanProfileName(name){
+    return String(name || '').trim().replace(/\s+/g, ' ').slice(0, 24);
+  }
+
+  function normalizeProfile(profile){
+    const normalized = profile && typeof profile === 'object' ? profile : {};
+    const stats = { ...defaultProfileStats(), ...(normalized.stats || {}) };
+    stats.coins = Math.max(0, Number(stats.coins) || 0);
+    stats.unlockedLevel = Math.max(1, Math.min(PROFILE_MAX_LEVELS, Number(stats.unlockedLevel) || 1));
+    stats.levelsCompleted = stats.levelsCompleted && typeof stats.levelsCompleted === 'object' ? stats.levelsCompleted : {};
+    stats.meteorLevelBest = stats.meteorLevelBest && typeof stats.meteorLevelBest === 'object' ? stats.meteorLevelBest : {};
+    stats.meteorSurvivalBest = Math.max(0, Number(stats.meteorSurvivalBest) || 0);
+    stats.meteorBest = Math.max(0, Number(stats.meteorBest) || 0);
+    stats.noteReadingBest = Math.max(0, Number(stats.noteReadingBest) || 0);
+    stats.playMs = { ...defaultProfileStats().playMs, ...(stats.playMs || {}) };
+    stats.gamesPlayed = { ...defaultProfileStats().gamesPlayed, ...(stats.gamesPlayed || {}) };
+    stats.totalScore = { ...defaultProfileStats().totalScore, ...(stats.totalScore || {}) };
+    stats.playMs.meteorSky = Math.max(0, Number(stats.playMs.meteorSky) || 0);
+    stats.playMs.noteReading = Math.max(0, Number(stats.playMs.noteReading) || 0);
+    stats.gamesPlayed.meteorSky = Math.max(0, Number(stats.gamesPlayed.meteorSky) || 0);
+    stats.gamesPlayed.noteReading = Math.max(0, Number(stats.gamesPlayed.noteReading) || 0);
+    stats.totalScore.meteorSky = Math.max(0, Number(stats.totalScore.meteorSky) || 0);
+    stats.totalScore.noteReading = Math.max(0, Number(stats.totalScore.noteReading) || 0);
+
+    normalized.id = normalized.id || makeProfile(normalized.name).id;
+    normalized.name = cleanProfileName(normalized.name) || 'Player 1';
+    normalized.createdAt = Number(normalized.createdAt) || Date.now();
+    normalized.updatedAt = Number(normalized.updatedAt) || normalized.createdAt;
+    normalized.stats = stats;
+    return normalized;
+  }
+
+  function legacyNumber(key, fallback=0){
+    const n = Number(localStorage.getItem(key));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function migrateLegacyStats(profile){
+    if (!profile || localStorage.getItem(PROFILE_MIGRATED_KEY) === 'done') return;
+    const stats = profile.stats;
+    stats.unlockedLevel = Math.max(stats.unlockedLevel, legacyNumber('unlocked_level_meteor_sky', 1));
+    stats.meteorSurvivalBest = Math.max(stats.meteorSurvivalBest, legacyNumber('meteor_survival_best', 0));
+    stats.meteorBest = Math.max(stats.meteorBest, legacyNumber('dino_best', 0));
+    stats.noteReadingBest = Math.max(stats.noteReadingBest, legacyNumber('nr_best', 0));
+    for (let i = 1; i <= PROFILE_MAX_LEVELS; i++){
+      const best = legacyNumber('meteor_level_best_' + i, 0);
+      if (best > 0) stats.meteorLevelBest[String(i)] = Math.max(Number(stats.meteorLevelBest[String(i)]) || 0, best);
+      if (i < stats.unlockedLevel) stats.levelsCompleted[String(i)] = true;
+    }
+    localStorage.setItem(PROFILE_MIGRATED_KEY, 'done');
+  }
+
+  function loadProfiles(){
+    try{
+      profileStore = JSON.parse(localStorage.getItem(PROFILE_STORE_KEY) || 'null');
+    }catch(e){
+      profileStore = null;
+    }
+    if (!profileStore || typeof profileStore !== 'object') profileStore = { version: 1, profiles: [] };
+    if (!Array.isArray(profileStore.profiles)) profileStore.profiles = [];
+    profileStore.profiles = profileStore.profiles.map(normalizeProfile);
+    if (!profileStore.profiles.length) profileStore.profiles.push(makeProfile('Player 1', 'player_1'));
+    const activeId = localStorage.getItem(ACTIVE_PROFILE_KEY);
+    activeProfile = profileStore.profiles.find(p => p.id === activeId) || profileStore.profiles[0];
+    migrateLegacyStats(activeProfile);
+    saveProfiles();
+  }
+
+  function saveProfiles(){
+    if (!profileStore || !activeProfile) return;
+    activeProfile.updatedAt = Date.now();
+    localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(profileStore));
+    localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfile.id);
+  }
+
+  function activeStats(){
+    if (!activeProfile) loadProfiles();
+    return activeProfile.stats;
+  }
+
+  function getUnlockedLevel(){
+    return Math.max(1, Math.min(PROFILE_MAX_LEVELS, Number(activeStats().unlockedLevel) || 1));
+  }
+
+  function setUnlockedLevel(level){
+    activeStats().unlockedLevel = Math.max(1, Math.min(PROFILE_MAX_LEVELS, Number(level) || 1));
+    saveProfiles();
+    renderProfilePanel();
+  }
+
+  function getMeteorLevelBest(level){
+    return Number(activeStats().meteorLevelBest[String(level)] || 0);
+  }
+
+  function setMeteorLevelBest(level, score){
+    const key = String(level);
+    const best = Math.max(Number(activeStats().meteorLevelBest[key]) || 0, Number(score) || 0);
+    activeStats().meteorLevelBest[key] = best;
+    saveProfiles();
+    renderProfilePanel();
+    return best;
+  }
+
+  function getMeteorSurvivalBest(){ return Number(activeStats().meteorSurvivalBest || 0); }
+  function setMeteorSurvivalBest(score){
+    activeStats().meteorSurvivalBest = Math.max(getMeteorSurvivalBest(), Number(score) || 0);
+    saveProfiles();
+    renderProfilePanel();
+    return activeStats().meteorSurvivalBest;
+  }
+
+  function getMeteorOverallBest(){ return Number(activeStats().meteorBest || 0); }
+  function setMeteorOverallBest(score){
+    activeStats().meteorBest = Math.max(getMeteorOverallBest(), Number(score) || 0);
+    saveProfiles();
+    renderProfilePanel();
+    return activeStats().meteorBest;
+  }
+
+  function getNoteReadingBest(){ return Number(activeStats().noteReadingBest || 0); }
+  function setNoteReadingBest(score){
+    activeStats().noteReadingBest = Math.max(getNoteReadingBest(), Number(score) || 0);
+    saveProfiles();
+    renderProfilePanel();
+    return activeStats().noteReadingBest;
+  }
+
+  function completedLevelCount(){
+    return Object.keys(activeStats().levelsCompleted || {}).filter(k => activeStats().levelsCompleted[k]).length;
+  }
+
+  function formatPlayTime(ms){
+    const totalSeconds = Math.floor((Number(ms) || 0) / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const rem = minutes % 60;
+    return rem ? `${hours}h ${rem}m` : `${hours}h`;
+  }
+
+  function profileMeta(profile){
+    const stats = profile.stats || defaultProfileStats();
+    const completed = Object.keys(stats.levelsCompleted || {}).filter(k => stats.levelsCompleted[k]).length;
+    return `${Number(stats.coins) || 0} coins | ${completed}/${PROFILE_MAX_LEVELS} levels`;
+  }
+
+  function renderProfilePanel(){
+    if (!activeProfile || !ui.profilePanel) return;
+    const stats = activeStats();
+    if (ui.activeProfileName) ui.activeProfileName.textContent = activeProfile.name;
+    if (ui.profileCoins) ui.profileCoins.textContent = String(Math.floor(Number(stats.coins) || 0));
+    if (ui.profileUnlockedCount) ui.profileUnlockedCount.textContent = `${getUnlockedLevel()} / ${PROFILE_MAX_LEVELS}`;
+    if (ui.profileCompletedCount) ui.profileCompletedCount.textContent = `${completedLevelCount()} / ${PROFILE_MAX_LEVELS}`;
+    if (ui.profileMeteorTime) ui.profileMeteorTime.textContent = formatPlayTime(stats.playMs.meteorSky);
+    if (ui.profileNoteTime) ui.profileNoteTime.textContent = formatPlayTime(stats.playMs.noteReading);
+    if (ui.profileSurvivalBest) ui.profileSurvivalBest.textContent = String(getMeteorSurvivalBest());
+    if (ui.profileNoteBest) ui.profileNoteBest.textContent = String(getNoteReadingBest());
+
+    if (ui.profileList){
+      ui.profileList.innerHTML = '';
+      for (const profile of profileStore.profiles){
+        const row = document.createElement('div');
+        row.className = 'profile-row' + (profile.id === activeProfile.id ? ' active' : '');
+        const details = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'profile-row-name';
+        name.textContent = profile.name;
+        const meta = document.createElement('div');
+        meta.className = 'profile-row-meta';
+        meta.textContent = profileMeta(profile);
+        details.appendChild(name);
+        details.appendChild(meta);
+        const btn = document.createElement('button');
+        btn.textContent = profile.id === activeProfile.id ? 'Active' : 'Load';
+        btn.disabled = profile.id === activeProfile.id;
+        btn.addEventListener('click', ()=>selectProfile(profile.id));
+        row.appendChild(details);
+        row.appendChild(btn);
+        ui.profileList.appendChild(row);
+      }
+    }
+
+    if (ui.profileLevelBests){
+      ui.profileLevelBests.innerHTML = '';
+      for (let i = 1; i <= PROFILE_MAX_LEVELS; i++){
+        const item = document.createElement('div');
+        item.className = 'profile-level-best';
+        item.innerHTML = `L${i}<strong>${getMeteorLevelBest(i)}</strong>`;
+        ui.profileLevelBests.appendChild(item);
+      }
+    }
+  }
+
+  function setProfileMsg(text){
+    if (ui.profileMsg) ui.profileMsg.textContent = text || '';
+  }
+
+  function applyActiveProfileState(){
+    unlockedLevel = getUnlockedLevel();
+    try{ game.best = getMeteorBestForCurrentSelection(); }catch(e){}
+    try{ nr.best = getNoteReadingBest(); nr.startBest = nr.best; }catch(e){}
+    try{ renderLevels(); }catch(e){}
+    renderProfilePanel();
+  }
+
+  function selectProfile(id){
+    const next = profileStore.profiles.find(p => p.id === id);
+    if (!next) return;
+    finishProfileRun({ score: getCurrentRunScore() });
+    activeProfile = next;
+    saveProfiles();
+    applyActiveProfileState();
+    setProfileMsg(`Loaded ${activeProfile.name}.`);
+  }
+
+  function createProfileFromInput(){
+    const name = cleanProfileName(ui.profileNameInput ? ui.profileNameInput.value : '');
+    if (!name){ setProfileMsg('Enter a profile name.'); return; }
+    const profile = makeProfile(name);
+    profileStore.profiles.push(profile);
+    if (ui.profileNameInput) ui.profileNameInput.value = '';
+    activeProfile = profile;
+    saveProfiles();
+    applyActiveProfileState();
+    setProfileMsg(`Created ${profile.name}.`);
+  }
+
+  function deleteActiveProfile(){
+    if (!activeProfile) return;
+    if (profileStore.profiles.length <= 1){
+      setProfileMsg('At least one profile is required.');
+      return;
+    }
+    if (!confirm(`Delete ${activeProfile.name} and its local stats?`)) return;
+    const deletedId = activeProfile.id;
+    profileStore.profiles = profileStore.profiles.filter(p => p.id !== deletedId);
+    activeProfile = profileStore.profiles[0];
+    saveProfiles();
+    applyActiveProfileState();
+    setProfileMsg('Profile deleted.');
+  }
+
+  function resetActiveProfileStats(){
+    if (!activeProfile) return;
+    activeProfile.stats = defaultProfileStats();
+    saveProfiles();
+    applyActiveProfileState();
+  }
+
+  function getCurrentRunScore(){
+    if (!activeRun) return 0;
+    try{
+      if (activeRun.mode === 'noteReading') return Number(nr.score) || 0;
+      return Number(game.score) || 0;
+    }catch(e){
+      return 0;
+    }
+  }
+
+  function startProfileRun(mode){
+    if (activeRun) finishProfileRun({ score: getCurrentRunScore() });
+    activeRun = { mode, startedAt: performance.now() };
+  }
+
+  function finishProfileRun({ score=0, completedLevel=null } = {}){
+    if (!activeRun || !activeProfile) return 0;
+    const stats = activeStats();
+    const mode = activeRun.mode;
+    const elapsed = Math.max(0, performance.now() - activeRun.startedAt);
+    stats.playMs[mode] = Math.max(0, Number(stats.playMs[mode]) || 0) + elapsed;
+    stats.gamesPlayed[mode] = Math.max(0, Number(stats.gamesPlayed[mode]) || 0) + 1;
+    stats.totalScore[mode] = Math.max(0, Number(stats.totalScore[mode]) || 0) + Math.max(0, Number(score) || 0);
+    if (completedLevel !== null && completedLevel !== 'survival'){
+      stats.levelsCompleted[String(completedLevel)] = true;
+    }
+    const scoreCoins = Math.floor(Math.max(0, Number(score) || 0) / 10);
+    const completionCoins = completedLevel !== null && completedLevel !== 'survival' ? 10 : 0;
+    const earned = scoreCoins + completionCoins;
+    if (earned > 0) stats.coins = Math.max(0, Number(stats.coins) || 0) + earned;
+    activeRun = null;
+    saveProfiles();
+    renderProfilePanel();
+    return earned;
+  }
+
+  function getMeteorBestForCurrentSelection(){
+    if (window.selectedLevel === 'survival') return getMeteorSurvivalBest();
+    if (window.selectedLevel) return getMeteorLevelBest(window.selectedLevel);
+    return getMeteorOverallBest();
+  }
+
+  loadProfiles();
+
     // menu music element (created lazily)
     ui._menuAudio = null;
     function createMenuAudio(){
@@ -287,6 +624,17 @@ function boot(){
   }
 
   ui.btnMidi.addEventListener('click', ()=>{ initMIDI(); });
+  if (ui.restartMicBtn) ui.restartMicBtn.addEventListener('click', async ()=>{
+    if (ui.inputSelect) ui.inputSelect.value = 'mic';
+    const ok = await ensureMic({ forceRestart: true });
+    if (ok && ui.permMsg) ui.permMsg.textContent = micStatusText('Microphone restarted.');
+  });
+  if (ui.inputSelect) ui.inputSelect.addEventListener('change', ()=>{
+    if (!ui.permMsg) return;
+    ui.permMsg.textContent = ui.inputSelect.value === 'mic'
+      ? 'Input source set to microphone.'
+      : 'Input source set to MIDI keyboard. Games started in this mode will not listen to the microphone.';
+  });
   if (ui.playAgainBtn) ui.playAgainBtn.addEventListener('click', async ()=>{
     hideGameOver();
     if (window.currentMode === 'note-reading') {
@@ -299,6 +647,7 @@ function boot(){
     }
   });
   if (ui.mainMenuBtn) ui.mainMenuBtn.addEventListener('click', ()=>{
+    finishProfileRun({ score: getCurrentRunScore() });
     // hide game over overlay and show the main menu (full-screen banner view)
     hideGameOver();
     // reset note reading state when returning to menu
@@ -320,6 +669,7 @@ function boot(){
     // go back to main menu overview: hide panels and hide the card
     if (ui.settingsPanel) ui.settingsPanel.style.display = 'none';
     if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.profilePanel) ui.profilePanel.style.display = 'none';
     if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.remove('show-card');
     ui.backBtn.style.display = 'none';
     // restore floating actions and main menu button
@@ -375,7 +725,7 @@ function boot(){
                 life:0.5+Math.random()*0.5, t:0,
                 color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
             }
-            if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
+            if (nr.score > nr.best){ nr.best = nr.score; setNoteReadingBest(nr.best); }
             nr.timerMax = Math.max(2, nr.timerMax - 0.5);
             nrSpawnNote();
           }
@@ -397,18 +747,20 @@ function boot(){
         // hide game over overlay
         hideGameOver();
         // note reading has no levels; go straight to main menu
-        if (window.currentMode === 'note-reading') {
-          if (typeof nr !== 'undefined') { nr.active = false; nr.over = false; }
-          if (ui.mainMenuOverlay) { ui.mainMenuOverlay.classList.remove('show-card'); ui.mainMenuOverlay.style.display = 'flex'; }
-          if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
-          return;
-        }
+          if (window.currentMode === 'note-reading') {
+            if (typeof nr !== 'undefined') { nr.active = false; nr.over = false; }
+            if (ui.mainMenuOverlay) { ui.mainMenuOverlay.classList.remove('show-card'); ui.mainMenuOverlay.style.display = 'flex'; }
+            if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
+            if (ui.profilePanel) ui.profilePanel.style.display = 'none';
+            return;
+          }
         // ensure overlay is visible (inline style may be 'none' from gameplay), then reveal the card
         if (ui.mainMenuOverlay) {
           ui.mainMenuOverlay.style.display = 'flex';
           ui.mainMenuOverlay.classList.add('show-card');
         }
         if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'block';
+        if (ui.profilePanel) ui.profilePanel.style.display = 'none';
         if (ui.modeLevels) ui.modeLevels.style.display = 'block';
         if (ui.backBtn) ui.backBtn.style.display = 'inline-block';
         if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
@@ -434,6 +786,7 @@ function boot(){
           window.selectedLevel = null;
           if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
           if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+          if (ui.profilePanel) ui.profilePanel.style.display = 'none';
           if (ui.modeLevels) ui.modeLevels.style.display = 'none';
           if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
           return;
@@ -442,6 +795,7 @@ function boot(){
         // keep main menu open but reveal the levels panel for this mode
         if (ui.modeLevels) ui.modeLevels.style.display = 'block';
         if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'block';
+        if (ui.profilePanel) ui.profilePanel.style.display = 'none';
         // populate levels grid for the selected mode
         renderLevels();
       });
@@ -453,8 +807,20 @@ function boot(){
     if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.add('show-card');
     if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'block';
     if (ui.settingsPanel) ui.settingsPanel.style.display = 'none';
+    if (ui.profilePanel) ui.profilePanel.style.display = 'none';
     if (ui.backBtn) ui.backBtn.style.display = 'inline-block';
     // hide floating actions and main-menu button while viewing the full-screen menu
+    if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
+    if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = 'none';
+  });
+  if (ui.profileBtn) ui.profileBtn.addEventListener('click', ()=>{
+    renderProfilePanel();
+    setProfileMsg('');
+    if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.add('show-card');
+    if (ui.profilePanel) ui.profilePanel.style.display = 'block';
+    if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.settingsPanel) ui.settingsPanel.style.display = 'none';
+    if (ui.backBtn) ui.backBtn.style.display = 'inline-block';
     if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = 'none';
   });
@@ -462,6 +828,7 @@ function boot(){
     if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.add('show-card');
     if (ui.settingsPanel) ui.settingsPanel.style.display = 'block';
     if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.profilePanel) ui.profilePanel.style.display = 'none';
     if (ui.backBtn) ui.backBtn.style.display = 'inline-block';
     if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = 'none';
@@ -486,21 +853,25 @@ function boot(){
     if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
   });
+  if (ui.profileCloseBtn) ui.profileCloseBtn.addEventListener('click', ()=>{
+    if (ui.profilePanel) ui.profilePanel.style.display = 'none';
+    if (ui.mainMenuOverlay) ui.mainMenuOverlay.classList.remove('show-card');
+    if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
+    if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
+  });
+  if (ui.createProfileBtn) ui.createProfileBtn.addEventListener('click', createProfileFromInput);
+  if (ui.profileNameInput) ui.profileNameInput.addEventListener('keydown', (ev)=>{
+    if (ev.key === 'Enter') createProfileFromInput();
+  });
+  if (ui.deleteProfileBtn) ui.deleteProfileBtn.addEventListener('click', deleteActiveProfile);
 
   if (ui.clearRecordsBtn) ui.clearRecordsBtn.addEventListener('click', ()=>{
     try{
-      if (!confirm('Clear all records? This will reset high scores and unlocked levels.')) return;
-      const keys = Object.keys(localStorage);
-      for (const k of keys){
-        if (k.startsWith('meteor_level_best_') || k === 'meteor_survival_best' || k === 'dino_best' || k === 'unlocked_level_meteor_sky' || k === 'nr_best'){
-          localStorage.removeItem(k);
-        }
-      }
-      // reset unlocked flag and in-memory values where possible
-      try{ localStorage.setItem('unlocked_level_meteor_sky', '1'); if (typeof unlockedLevel !== 'undefined') unlockedLevel = 1; }catch(e){}
+      if (!confirm('Clear records for the current profile? This will reset high scores, coins, and unlocked levels.')) return;
+      resetActiveProfileStats();
       try{ game.best = 0; if (ui.overlayBest) ui.overlayBest.textContent = '0'; }catch(e){}
       try{ renderLevels(); }catch(e){}
-      if (ui.permMsg) ui.permMsg.textContent = 'Records cleared.';
+      if (ui.permMsg) ui.permMsg.textContent = 'Current profile records cleared.';
     }catch(e){ if (ui.permMsg) ui.permMsg.textContent = 'Failed to clear records.'; }
   });
 
@@ -521,20 +892,9 @@ function boot(){
 
   // Calibration UI handlers and helpers
   async function ensureMicForCalibration(){
-    if (audio.running && audio.analyser) return true;
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
-      if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const src = audio.ctx.createMediaStreamSource(stream);
-      audio.analyser = audio.ctx.createAnalyser();
-      audio.analyser.fftSize = 2048;
-      audio.analyser.smoothingTimeConstant = 0;
-      audio.sampleRate = audio.ctx.sampleRate;
-      audio.data = new Float32Array(audio.analyser.fftSize);
-      src.connect(audio.analyser);
-      audio.running = true;
-      return true;
-    }catch(e){ if (ui.calibMsg) ui.calibMsg.textContent = 'Microphone permission denied.'; return false; }
+    const ok = await ensureMic();
+    if (!ok && ui.calibMsg) ui.calibMsg.textContent = audio.lastError || 'Microphone permission denied.';
+    return ok;
   }
 
   function setCalibLevel(pct){ if (ui.calibLevel) ui.calibLevel.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
@@ -572,7 +932,6 @@ function boot(){
           try{
             const midiF = freqToMidi(res.freq);
             console.debug('calib-sample', {freq: res.freq.toFixed(2), A4, midiFloat: midiF.toFixed(3), midiNearest: midi, letter, cents: c});
-            if (ui && ui.detDebug) ui.detDebug.textContent = `A4: ${A4}\nfreq: ${res.freq.toFixed(2)} Hz\nmidiFloat: ${midiF.toFixed(3)}\nmidiNearest: ${midi}\nletter: ${letter}\ncents: ${c}`;
           }catch(e){}
         }
         if (performance.now() - t0 >= durationMs){ clearInterval(iv); if (notes.length===0) return resolve({ok:true, count:0});
@@ -696,10 +1055,9 @@ function boot(){
   if (ui.calibCloseBtn) ui.calibCloseBtn.addEventListener('click', ()=>{ if (ui.calibPanel) ui.calibPanel.style.display = 'none'; });
 
   // level system state
-  const MAX_LEVELS = 10;
-  const unlockedKey = 'unlocked_level_meteor_sky';
-  let unlockedLevel = Number(localStorage.getItem(unlockedKey) || 1);
-  function saveUnlocked(){ localStorage.setItem(unlockedKey, String(unlockedLevel)); }
+  const MAX_LEVELS = PROFILE_MAX_LEVELS;
+  unlockedLevel = getUnlockedLevel();
+  function saveUnlocked(){ setUnlockedLevel(unlockedLevel); }
 
   function spawnIntervalForLevel(l){
     // linear map from 2000ms (level1) to 500ms (level10)
@@ -727,8 +1085,7 @@ function boot(){
         window.selectedLevel = lvl;
         // load per-level best for HUD and overlays
         try{
-          const key = 'meteor_level_best_' + String(lvl);
-          game.best = Number(localStorage.getItem(key) || 0);
+          game.best = getMeteorLevelBest(lvl);
         }catch(e){ console.warn('load per-level best failed', e); }
         // hide menus since we're about to play
         if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
@@ -746,7 +1103,7 @@ function boot(){
     surv.dataset.level = 'survival';
     surv.addEventListener('click', ()=>{
       window.selectedLevel = 'survival';
-      try{ const key = 'meteor_survival_best'; game.best = Number(localStorage.getItem(key) || 0); }catch(e){}
+      try{ game.best = getMeteorSurvivalBest(); }catch(e){}
       if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
       if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
       if (ui.modeLevels) ui.modeLevels.style.display = 'none';
@@ -760,10 +1117,10 @@ function boot(){
     const lvl = window.selectedLevel || 1;
     if (lvl >= 1 && lvl < MAX_LEVELS){ unlockedLevel = Math.max(unlockedLevel, lvl+1); saveUnlocked(); }
     // update per-level record and show a styled win overlay
-    const key = 'meteor_level_best_' + String(lvl);
-    const prevBest = Number(localStorage.getItem(key) || 0);
+    const prevBest = getMeteorLevelBest(lvl);
     const isNew = game.score > prevBest;
-    if (isNew) localStorage.setItem(key, String(game.score));
+    if (isNew) setMeteorLevelBest(lvl, game.score);
+    finishProfileRun({ score: game.score, completedLevel: lvl });
 
     // graceful fallback: if overlay DOM isn't available, show a simple message
     if (!ui || !ui.overlay){
@@ -836,33 +1193,15 @@ function boot(){
     }
 
     if (mode === 'mic'){
-      if (!audio.running){
-        try{
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
-          });
-          audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const src = audio.ctx.createMediaStreamSource(stream);
-          audio.analyser = audio.ctx.createAnalyser();
-          audio.analyser.fftSize = 2048;
-          audio.analyser.smoothingTimeConstant = 0;
-          audio.sampleRate = audio.ctx.sampleRate;
-          audio.data = new Float32Array(audio.analyser.fftSize);
-          src.connect(audio.analyser);
-          audio.running = true;
-          ui.permMsg.textContent = 'Microphone running.';
-          if (ui.a4) A4 = Number(ui.a4.value)||440;
-          lastTs = performance.now();
-          requestAnimationFrame(updateAudio);
-        } catch(e){
-          console.error(e);
-          ui.permMsg.textContent = 'Microphone permission denied or unavailable.';
-        }
-      } else {
-        ui.permMsg.textContent = 'Microphone already running.';
-        if (audio.running && !audio.updating){ lastTs = performance.now(); requestAnimationFrame(updateAudio); }
+      const ok = await ensureMic();
+      if (!ok){
+        game.started = false;
+        if (ui.permMsg) ui.permMsg.textContent = audio.lastError || 'Microphone permission denied or unavailable.';
+        return;
       }
+      if (ui.a4) A4 = Number(ui.a4.value)||440;
     } else if (mode === 'midi'){
+      stopMic();
       // ensure MIDI is initialized and inform the user
       if (!midiAccess) await initMIDI();
       ui.permMsg.textContent = 'Using MIDI input.';
@@ -874,7 +1213,7 @@ function boot(){
         game.survival = true;
         game.level = null;
         game.levelBanner = { t: 0, life: 2.0, level: 'Survival' };
-        try{ const key = 'meteor_survival_best'; game.best = Number(localStorage.getItem(key) || 0); }catch(e){}
+        try{ game.best = getMeteorSurvivalBest(); }catch(e){}
         // ensure base speed starts like level 1
         game.baseSpeed = game.baseBaseSpeed;
       } else {
@@ -885,13 +1224,10 @@ function boot(){
     } else {
       game.levelBanner = null;
     }
-    // ensure HUD shows per-level best when a level is active
-    if (window.selectedLevel){
-      try{
-        const key = 'meteor_level_best_' + String(window.selectedLevel);
-        game.best = Number(localStorage.getItem(key) || 0);
-      }catch(e){ console.warn('load per-level best on start failed', e); }
-    }
+    try{
+      game.best = getMeteorBestForCurrentSelection();
+    }catch(e){ console.warn('load meteor best on start failed', e); }
+    startProfileRun('meteorSky');
     // If playing a mode/game (e.g., Meteor sky), start the game music.
     try{
       if (window.currentMode === 'meteor-sky'){
@@ -1002,7 +1338,7 @@ const NATURAL_POOL = ['C','D','E','F','G','A','B'];
 const game = {
   started:false, over:false, time:0,
   score:0,
-  best: Number(localStorage.getItem('dino_best') || 0),
+  best: getMeteorOverallBest(),
   hsPop: 0,
   lives:3,
   livesMax: 3,
@@ -1055,10 +1391,9 @@ function showGameOver(){
   // if survival mode, update per-mode best
   try{
     if (game.survival){
-      const key = 'meteor_survival_best';
-      const prevBest = Number(localStorage.getItem(key) || 0);
+      const prevBest = getMeteorSurvivalBest();
       const isNew = game.score > prevBest;
-      if (isNew) localStorage.setItem(key, String(game.score));
+      if (isNew) setMeteorSurvivalBest(game.score);
       // badge
       const existingBadge = ui.overlayScore && ui.overlayScore.parentElement && ui.overlayScore.parentElement.querySelector('.new-high');
       if (existingBadge) existingBadge.remove();
@@ -1070,6 +1405,7 @@ function showGameOver(){
       ui.overlayBest.textContent = String(game.best);
     }
   }catch(e){ ui.overlayBest.textContent = String(game.best); }
+  finishProfileRun({ score: game.score });
   // ensure the main menu button is visible in the Game Over popup
   if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
   // hide floating actions while Game Over is displayed; restore only when Main menu is pressed
@@ -1118,13 +1454,14 @@ function explodeAt(x,y,note){
 }
 
 // Centralized scoring helper so we can animate score pops and handle high-score logic.
-function addScore(points){
+  function addScore(points){
   if (typeof points !== 'number') points = Number(points) || 0;
   // increment main score
   game.score += points;
   // update per-level/local bests handled elsewhere; keep global backup
   try{
-    if (game.score > game.best){ game.best = game.score; localStorage.setItem('dino_best', String(game.best)); game.hsPop = 1.0; }
+    if (game.score > game.best){ game.best = game.score; game.hsPop = 1.0; }
+    if (game.score > getMeteorOverallBest()) setMeteorOverallBest(game.score);
   }catch(e){ /* ignore */ }
   // set lastAdd so drawHighScore can render a fading +X; reset timer if already active
   game.lastAdd = { val: points, t: 0, life: 1.0 };
@@ -1442,7 +1779,8 @@ const NR_POOL = [
 const nr = {
   active: false, over: false,
   score: 0,
-  best: Number(localStorage.getItem('nr_best') || 0),
+  best: getNoteReadingBest(),
+  startBest: getNoteReadingBest(),
   round: 0,
   currentNote: null,
   timerMax: 15,
@@ -1474,7 +1812,8 @@ function nrReset(){
   nr.scorePop = 0;
   nr.lastAdd = { val:0, t:10, life:0 };
   nr.particles = [];
-  nr.best = Number(localStorage.getItem('nr_best') || 0);
+  nr.best = getNoteReadingBest();
+  nr.startBest = nr.best;
 }
 
 function nrSpawnNote(){
@@ -1509,7 +1848,7 @@ function nrCheckMatch(freq){
         life:0.5+Math.random()*0.5, t:0,
         color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
     }
-    if (nr.score > nr.best){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.best)); }
+    if (nr.score > nr.best){ nr.best = nr.score; setNoteReadingBest(nr.best); }
     nr.timerMax = Math.max(2, nr.timerMax - 0.5);
     nrSpawnNote();
     return true;
@@ -1519,9 +1858,10 @@ function nrCheckMatch(freq){
 
 function nrShowGameOver(){
   nr.over = true;
-  const prev = Number(localStorage.getItem('nr_best') || 0);
+  const prev = Number(nr.startBest) || getNoteReadingBest();
   const isNew = nr.score > prev;
-  if (isNew){ nr.best = nr.score; localStorage.setItem('nr_best', String(nr.score)); }
+  if (nr.score > getNoteReadingBest()){ nr.best = nr.score; setNoteReadingBest(nr.score); }
+  finishProfileRun({ score: nr.score });
   if (!ui || !ui.overlay) return;
   const t = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
   if (t){ t.textContent = 'Game Over!'; t.style.color = '#ff6b6b'; }
@@ -1738,11 +2078,6 @@ function stepNoteReading(dt){
   const gLineY = NR_BOT - NR_SP; // G4 = 2nd line from bottom
   drawTrebleClef(NR_LEFT + 38, gLineY, NR_SP);
 
-  // Debug: always show state at bottom of canvas
-  ctx.save(); ctx.fillStyle='#ff0'; ctx.font='bold 11px monospace'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-  ctx.fillText('active='+nr.active+' over='+nr.over+' note='+(nr.currentNote ? nr.currentNote.name+nr.currentNote.octave+' pos='+nr.currentNote.staffPos : 'null'), 4, H-4);
-  ctx.restore();
-
   if (nr.active && !nr.over){
     nr.timerRemaining -= dt;
     if (nr.timerRemaining <= 0){ nr.timerRemaining = 0; nrShowGameOver(); }
@@ -1791,26 +2126,12 @@ async function startNoteReading(){
   // spawn first note immediately (before async mic setup)
   nrSpawnNote();
   console.log('NR started, note:', nr.currentNote, 'active:', nr.active);
-  // ensure mic running
-  if (!audio.running){
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia(
-        { audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }});
-      if (!audio.ctx) audio.ctx = new (window.AudioContext||window.webkitAudioContext)();
-      const src = audio.ctx.createMediaStreamSource(stream);
-      audio.analyser = audio.ctx.createAnalyser();
-      audio.analyser.fftSize = 2048; audio.analyser.smoothingTimeConstant = 0;
-      audio.sampleRate = audio.ctx.sampleRate;
-      audio.data = new Float32Array(audio.analyser.fftSize);
-      src.connect(audio.analyser); audio.running = true;
-      if (ui.permMsg) ui.permMsg.textContent = 'Microphone running.';
-    } catch(e){
-      console.error(e);
-      if (ui.permMsg) ui.permMsg.textContent = 'Microphone permission denied.';
-      return;
-    }
+  if (!(await ensureMic())){
+    nr.active = false;
+    if (ui.permMsg) ui.permMsg.textContent = audio.lastError || 'Microphone permission denied.';
+    return;
   }
-  if (!audio.updating){ lastTs = performance.now(); requestAnimationFrame(updateAudio); }
+  startProfileRun('noteReading');
   try{ stopMenuMusic(); }catch(e){}
   try{ stopGameMusic(); }catch(e){}
   if (ui.levelTimer) ui.levelTimer.style.display = 'none';
@@ -1925,10 +2246,118 @@ function step(ts){
 }
 
 /* ------------------- Audio ------------------- */
-const audio = { ctx:null, analyser:null, data:null, running:false, sampleRate:48000, updating:false, _raf:null };
+const MIC_CONSTRAINTS = { echoCancellation:false, noiseSuppression:false, autoGainControl:false };
+const audio = {
+  ctx:null,
+  source:null,
+  stream:null,
+  analyser:null,
+  data:null,
+  running:false,
+  sampleRate:48000,
+  updating:false,
+  _raf:null,
+  lastError:null
+};
+
+function micTrackIsLive(){
+  return Boolean(audio.stream && audio.stream.getAudioTracks().some(track => track.readyState === 'live'));
+}
+
+function micStatusText(prefix='Microphone running.'){
+  const track = audio.stream && audio.stream.getAudioTracks()[0];
+  const trackState = track ? track.readyState : 'none';
+  const ctxState = audio.ctx ? audio.ctx.state : 'none';
+  return `${prefix} Audio: ${ctxState}. Track: ${trackState}.`;
+}
+
+function stopMic(){
+  if (audio._raf){
+    cancelAnimationFrame(audio._raf);
+    audio._raf = null;
+  }
+  try{ if (audio.source) audio.source.disconnect(); }catch(e){}
+  if (audio.stream){
+    for (const track of audio.stream.getTracks()){
+      try{ track.onended = null; track.stop(); }catch(e){}
+    }
+  }
+  audio.source = null;
+  audio.stream = null;
+  audio.analyser = null;
+  audio.data = null;
+  audio.running = false;
+  audio.updating = false;
+  if (game && game._stable){
+    game._stable.start = 0;
+    game._stable.letter = null;
+  }
+}
+
+function startAudioUpdates(){
+  if (!audio.running || !audio.analyser || audio.updating) return;
+  audio.updating = true;
+  audio._raf = requestAnimationFrame(updateAudio);
+}
+
+async function ensureMic({ forceRestart=false } = {}){
+  audio.lastError = null;
+  try{
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) throw new Error('Web Audio is not supported in this browser.');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      throw new Error('Microphone access requires HTTPS, localhost, and browser permission.');
+    }
+
+    if (!audio.ctx || audio.ctx.state === 'closed') audio.ctx = new AudioCtx();
+    if (audio.ctx.state === 'suspended') await audio.ctx.resume();
+
+    if (!forceRestart && audio.running && audio.analyser && audio.data && micTrackIsLive()){
+      startAudioUpdates();
+      if (ui && ui.permMsg) ui.permMsg.textContent = micStatusText('Microphone already running.');
+      return true;
+    }
+
+    stopMic();
+    if (!audio.ctx || audio.ctx.state === 'closed') audio.ctx = new AudioCtx();
+    if (audio.ctx.state === 'suspended') await audio.ctx.resume();
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_CONSTRAINTS });
+    audio.stream = stream;
+    audio.source = audio.ctx.createMediaStreamSource(stream);
+    audio.analyser = audio.ctx.createAnalyser();
+    audio.analyser.fftSize = 2048;
+    audio.analyser.smoothingTimeConstant = 0;
+    audio.sampleRate = audio.ctx.sampleRate;
+    audio.data = new Float32Array(audio.analyser.fftSize);
+    audio.source.connect(audio.analyser);
+    audio.running = true;
+
+    for (const track of stream.getAudioTracks()){
+      track.onended = () => {
+        audio.running = false;
+        audio.updating = false;
+        if (ui && ui.permMsg) ui.permMsg.textContent = 'Microphone stopped. Use Restart microphone to reconnect.';
+      };
+    }
+
+    if (ui && ui.permMsg) ui.permMsg.textContent = micStatusText('Microphone running.');
+    startAudioUpdates();
+    return true;
+  }catch(e){
+    console.error('Microphone setup failed', e);
+    audio.lastError = e && e.message ? e.message : 'Microphone permission denied or unavailable.';
+    if (ui && ui.permMsg) ui.permMsg.textContent = audio.lastError;
+    return false;
+  }
+}
 
 function updateAudio(){
-  if (!audio.running) { audio.updating = false; return; }
+  if (!audio.running || !audio.analyser || !audio.data || !micTrackIsLive()) {
+    audio.running = false;
+    audio.updating = false;
+    return;
+  }
   audio.updating = true;
   audio.analyser.getFloatTimeDomainData(audio.data);
 
@@ -1999,6 +2428,7 @@ function updateAudio(){
 }
 
 /* ------------------- Boot ------------------- */
+  applyActiveProfileState();
   initStars(140);
   drawBackground(); requestAnimationFrame(step);
   // show main menu on app start

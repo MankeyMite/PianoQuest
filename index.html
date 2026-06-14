@@ -31,7 +31,10 @@
     <div id="mainMenuOverlay" class="menu-overlay" style="display:none">
       <div class="menu-card">
         <div class="menu-banner"><img src="Assets/Pictures/Main menu.png" alt="Main menu"></div>
-        <h2 class="menu-title">Main Menu</h2>
+        <div class="menu-header">
+          <button id="backBtn" class="back-button" style="display:none">Back</button>
+          <h2 class="menu-title">Main Menu</h2>
+        </div>
         <!-- menu actions moved outside the card so they're visible over the full-screen banner -->
 
         <div id="chooseModePanel" class="choose-panel" style="display:none">
@@ -66,7 +69,10 @@
               <option value="mic">Microphone</option>
               <option value="midi">MIDI keyboard</option>
             </select>
-            <button id="btnMidi">Connect MIDI</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button id="btnMidi">Connect MIDI</button>
+              <button id="restartMicBtn">Restart microphone</button>
+            </div>
             <div style="height:6px"></div>
             <div id="permMsg"></div>
             <div id="midiMsg" style="margin-top:6px; color:#bcd3ef"></div>
@@ -110,10 +116,45 @@
             </div>
             <div style="height:8px"></div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <button id="clearRecordsBtn" style="background:#7a2f2f; color:#fff; border:1px solid #a05050">Clear all records</button>
+              <button id="clearRecordsBtn" style="background:#7a2f2f; color:#fff; border:1px solid #a05050">Clear profile records</button>
               <button id="settingsCloseBtn">Close</button>
             </div>
           </div>
+        </div>
+
+        <div id="profilePanel" class="choose-panel profile-panel" style="display:none">
+          <div class="profile-current">
+            <div>
+              <div class="profile-label">Current profile</div>
+              <div id="activeProfileName" class="profile-name">Player 1</div>
+            </div>
+            <div class="coin-pill">Coins <span id="profileCoins">0</span></div>
+          </div>
+
+          <div class="profile-actions">
+            <input id="profileNameInput" type="text" maxlength="24" placeholder="New profile name">
+            <button id="createProfileBtn" class="primary">Create</button>
+          </div>
+
+          <div id="profileList" class="profile-list"></div>
+
+          <div class="profile-stats">
+            <div class="profile-stat"><span>Levels unlocked</span><strong id="profileUnlockedCount">1 / 10</strong></div>
+            <div class="profile-stat"><span>Levels completed</span><strong id="profileCompletedCount">0 / 10</strong></div>
+            <div class="profile-stat"><span>Meteor time</span><strong id="profileMeteorTime">0m</strong></div>
+            <div class="profile-stat"><span>Note time</span><strong id="profileNoteTime">0m</strong></div>
+            <div class="profile-stat"><span>Survival best</span><strong id="profileSurvivalBest">0</strong></div>
+            <div class="profile-stat"><span>Note Reading best</span><strong id="profileNoteBest">0</strong></div>
+          </div>
+
+          <div class="levels-header">Meteor level bests</div>
+          <div id="profileLevelBests" class="profile-level-bests"></div>
+
+          <div class="profile-footer">
+            <button id="deleteProfileBtn" class="danger">Delete profile</button>
+            <button id="profileCloseBtn">Close</button>
+          </div>
+          <div id="profileMsg" class="profile-msg"></div>
         </div>
 
         <div style="height:10px"></div>
@@ -122,6 +163,7 @@
     <!-- floating actions visible over the banner (mode/settings) -->
     <div class="menu-floating-actions" style="pointer-events:auto">
       <button id="chooseModeBtn" class="primary">Choose mode</button>
+      <button id="profileBtn">Profiles</button>
       <button id="settingsBtn">Settings</button>
     </div>
     <div id="readyOverlay" class="ready-overlay" style="display:none">
