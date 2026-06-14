@@ -80,9 +80,15 @@ function boot(){
     a4: document.getElementById('a4'),
     status: document.getElementById('status'),
     canvas: document.getElementById('game'),
+    inGameActions: document.getElementById('inGameActions'),
+    inGameMenuBtn: document.getElementById('inGameMenuBtn'),
     overlay: document.getElementById('gameOverOverlay'),
     overlayScore: document.getElementById('overlayScore'),
     overlayBest: document.getElementById('overlayBest'),
+    coinReward: document.getElementById('coinReward'),
+    overlayCoinsEarned: document.getElementById('overlayCoinsEarned'),
+    overlayCoinDetails: document.getElementById('overlayCoinDetails'),
+    overlayCoinTotal: document.getElementById('overlayCoinTotal'),
     playAgainBtn: document.getElementById('playAgainBtn'),
     selectLevelBtn: document.getElementById('selectLevelBtn'),
     mainMenuBtn: document.getElementById('mainMenuBtn'),
@@ -102,6 +108,10 @@ function boot(){
     menuFloatingActions: document.querySelector('.menu-floating-actions'),
     modeLevels: document.getElementById('modeLevels'),
     levelsGrid: document.getElementById('levelsGrid'),
+    levelDetail: document.getElementById('levelDetail'),
+    levelDetailTitle: document.getElementById('levelDetailTitle'),
+    levelDetailStats: document.getElementById('levelDetailStats'),
+    startLevelBtn: document.getElementById('startLevelBtn'),
     levelTimer: document.getElementById('levelTimer'),
     // calibration UI refs
     calibrateBtn: document.getElementById('calibrateBtn'),
@@ -143,9 +153,13 @@ function boot(){
   const ACTIVE_PROFILE_KEY = 'pq_active_profile_id';
   const PROFILE_MIGRATED_KEY = 'pq_profiles_legacy_migrated_v1';
   const PROFILE_MAX_LEVELS = 10;
+  const COIN_SCORE_DIVISOR = 10;
+  const WIN_COIN_MULTIPLIER = 2;
+  const FIRST_CLEAR_COIN_BONUS = 25;
   let profileStore = null;
   let activeProfile = null;
   let activeRun = null;
+  let coinRewardAnimation = null;
   let unlockedLevel = 1;
 
   function defaultProfileStats(){
@@ -439,25 +453,91 @@ function boot(){
     activeRun = { mode, startedAt: performance.now() };
   }
 
-  function finishProfileRun({ score=0, completedLevel=null } = {}){
-    if (!activeRun || !activeProfile) return 0;
+  function finishProfileRun({ score=0, completedLevel=null, won=false, awardCoins=true } = {}){
+    if (!activeRun || !activeProfile) {
+      const total = activeProfile ? Math.floor(Number(activeStats().coins) || 0) : 0;
+      return { earned: 0, previousTotal: total, total, baseCoins: 0, multiplier: 1, firstClearBonus: 0, firstClear: false, won: false };
+    }
     const stats = activeStats();
     const mode = activeRun.mode;
     const elapsed = Math.max(0, performance.now() - activeRun.startedAt);
+    const previousTotal = Math.floor(Number(stats.coins) || 0);
+    const levelKey = completedLevel !== null && completedLevel !== 'survival' ? String(completedLevel) : null;
+    const firstClear = Boolean(won && levelKey && !stats.levelsCompleted[levelKey]);
     stats.playMs[mode] = Math.max(0, Number(stats.playMs[mode]) || 0) + elapsed;
     stats.gamesPlayed[mode] = Math.max(0, Number(stats.gamesPlayed[mode]) || 0) + 1;
     stats.totalScore[mode] = Math.max(0, Number(stats.totalScore[mode]) || 0) + Math.max(0, Number(score) || 0);
-    if (completedLevel !== null && completedLevel !== 'survival'){
-      stats.levelsCompleted[String(completedLevel)] = true;
+    if (levelKey){
+      stats.levelsCompleted[levelKey] = true;
     }
-    const scoreCoins = Math.floor(Math.max(0, Number(score) || 0) / 10);
-    const completionCoins = completedLevel !== null && completedLevel !== 'survival' ? 10 : 0;
-    const earned = scoreCoins + completionCoins;
-    if (earned > 0) stats.coins = Math.max(0, Number(stats.coins) || 0) + earned;
+    const baseCoins = awardCoins ? Math.max(1, Math.floor(Math.max(0, Number(score) || 0) / COIN_SCORE_DIVISOR)) : 0;
+    const multiplier = awardCoins && won ? WIN_COIN_MULTIPLIER : 1;
+    const firstClearBonus = awardCoins && firstClear ? FIRST_CLEAR_COIN_BONUS : 0;
+    const earned = awardCoins ? baseCoins * multiplier + firstClearBonus : 0;
+    stats.coins = previousTotal + earned;
     activeRun = null;
     saveProfiles();
     renderProfilePanel();
-    return earned;
+    return { earned, previousTotal, total: stats.coins, baseCoins, multiplier, firstClearBonus, firstClear, won };
+  }
+
+  function resetCoinReward(){
+    if (coinRewardAnimation) cancelAnimationFrame(coinRewardAnimation);
+    coinRewardAnimation = null;
+    if (ui.coinReward) ui.coinReward.style.display = 'none';
+    if (ui.overlayCoinsEarned) ui.overlayCoinsEarned.classList.remove('counting');
+    if (ui.overlayCoinTotal) ui.overlayCoinTotal.classList.remove('counting');
+  }
+
+  function showCoinReward(reward){
+    if (!ui.coinReward || !reward || !reward.earned) {
+      resetCoinReward();
+      return;
+    }
+    if (coinRewardAnimation) cancelAnimationFrame(coinRewardAnimation);
+    const earned = Math.floor(Number(reward.earned) || 0);
+    const from = Math.floor(Number(reward.previousTotal) || 0);
+    const to = Math.floor(Number(reward.total) || from + earned);
+    const details = [];
+    if (reward.multiplier > 1) details.push(`Win x${reward.multiplier}`);
+    if (reward.firstClearBonus > 0) details.push(`First clear +${reward.firstClearBonus}`);
+
+    ui.coinReward.style.display = 'block';
+    if (ui.overlayCoinsEarned) {
+      ui.overlayCoinsEarned.textContent = '0';
+      ui.overlayCoinsEarned.classList.add('counting');
+    }
+    if (ui.overlayCoinDetails) {
+      ui.overlayCoinDetails.textContent = details.join(' | ');
+      ui.overlayCoinDetails.style.display = details.length ? 'block' : 'none';
+    }
+    if (ui.overlayCoinTotal) {
+      ui.overlayCoinTotal.textContent = String(from);
+      ui.overlayCoinTotal.classList.add('counting');
+    }
+
+    const duration = 950;
+    const startedAt = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      if (ui.overlayCoinsEarned) ui.overlayCoinsEarned.textContent = String(Math.floor(earned * eased));
+      if (ui.overlayCoinTotal) ui.overlayCoinTotal.textContent = String(Math.floor(from + (to - from) * eased));
+      if (t < 1) {
+        coinRewardAnimation = requestAnimationFrame(tick);
+      } else {
+        if (ui.overlayCoinsEarned) ui.overlayCoinsEarned.textContent = String(earned);
+        if (ui.overlayCoinTotal) {
+          ui.overlayCoinTotal.textContent = String(to);
+          setTimeout(()=>{
+            if (ui.overlayCoinsEarned) ui.overlayCoinsEarned.classList.remove('counting');
+            if (ui.overlayCoinTotal) ui.overlayCoinTotal.classList.remove('counting');
+          }, 220);
+        }
+        coinRewardAnimation = null;
+      }
+    };
+    coinRewardAnimation = requestAnimationFrame(tick);
   }
 
   function getMeteorBestForCurrentSelection(){
@@ -648,6 +728,7 @@ function boot(){
   });
   if (ui.mainMenuBtn) ui.mainMenuBtn.addEventListener('click', ()=>{
     finishProfileRun({ score: getCurrentRunScore() });
+    setInGameActionsVisible(false);
     // hide game over overlay and show the main menu (full-screen banner view)
     hideGameOver();
     // reset note reading state when returning to menu
@@ -691,6 +772,46 @@ function boot(){
       }
     });
   }
+
+  function setInGameActionsVisible(visible){
+    if (ui.inGameActions) ui.inGameActions.style.display = visible ? 'flex' : 'none';
+  }
+
+  function stopActivePlayWithoutReward(){
+    finishProfileRun({ score: getCurrentRunScore(), awardCoins: false });
+    game.started = false;
+    game.over = false;
+    game.comets.length = 0;
+    game.particles.length = 0;
+    nr.active = false;
+    nr.over = false;
+    setInGameActionsVisible(false);
+    if (ui.levelTimer) {
+      ui.levelTimer.textContent = '';
+      ui.levelTimer.style.display = 'none';
+    }
+    if (ui.readyOverlay) ui.readyOverlay.style.display = 'none';
+    if (ui.overlay) ui.overlay.style.display = 'none';
+    resetCoinReward();
+    try{ stopGameMusic(); }catch(e){}
+  }
+
+  function openMainMenuFromPlay(){
+    stopActivePlayWithoutReward();
+    if (ui.mainMenuOverlay) {
+      ui.mainMenuOverlay.classList.remove('show-card');
+      ui.mainMenuOverlay.style.display = 'flex';
+    }
+    if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.settingsPanel) ui.settingsPanel.style.display = 'none';
+    if (ui.profilePanel) ui.profilePanel.style.display = 'none';
+    if (ui.backBtn) ui.backBtn.style.display = 'none';
+    if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
+    if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
+    try{ playMenuMusic(); }catch(e){}
+  }
+
+  if (ui.inGameMenuBtn) ui.inGameMenuBtn.addEventListener('click', openMainMenuFromPlay);
 
   // populate modes list (initial sample)
 
@@ -1064,10 +1185,76 @@ function boot(){
     const min = 500, max = 2000; const t = (l-1)/9;
     return Math.round(max + (min - max) * t);
   }
-  // level 1 = 30 px/s, then +10 px/s per level
+  // level 1 = 20 px/s, then +10 px/s per level
+  function levelSpeedForLevel(l){
+    return 20 + (Math.max(1, l) - 1) * 10;
+  }
   function speedMultiplierForLevel(l){
-    const target = 30 + (Math.max(1, l) - 1) * 10; // px/s for this level
-    return target / game.baseBaseSpeed;
+    return levelSpeedForLevel(l) / game.baseBaseSpeed;
+  }
+
+  function selectedLevelIsStartable(){
+    if (window.selectedLevel === 'survival') return true;
+    const lvl = Number(window.selectedLevel);
+    return Number.isFinite(lvl) && lvl >= 1 && lvl <= unlockedLevel;
+  }
+
+  function renderLevelDetail(){
+    if (!ui.levelDetail) return;
+    const selected = window.selectedLevel;
+    if (!selected){
+      ui.levelDetail.style.display = 'none';
+      return;
+    }
+
+    ui.levelDetail.style.display = 'flex';
+    const canStart = selectedLevelIsStartable();
+    if (selected === 'survival'){
+      if (ui.levelDetailTitle) ui.levelDetailTitle.textContent = 'Survival';
+      if (ui.levelDetailStats) {
+        ui.levelDetailStats.innerHTML = [
+          `Best score: <strong>${getMeteorSurvivalBest()}</strong>`,
+          'Status: Unlocked',
+          'Goal: Keep playing as long as you can'
+        ].join('<br>');
+      }
+      if (ui.startLevelBtn) {
+        ui.startLevelBtn.disabled = false;
+        ui.startLevelBtn.textContent = 'Start';
+      }
+      return;
+    }
+
+    const lvl = Number(selected) || 1;
+    const locked = lvl > unlockedLevel;
+    const completed = Boolean(activeStats().levelsCompleted[String(lvl)]);
+    if (ui.levelDetailTitle) ui.levelDetailTitle.textContent = `Level ${lvl}`;
+    if (ui.levelDetailStats) {
+      ui.levelDetailStats.innerHTML = [
+        `Best score: <strong>${getMeteorLevelBest(lvl)}</strong>`,
+        `Status: ${locked ? 'Locked' : (completed ? 'Completed' : 'Unlocked')}`,
+        `Speed: ${Math.round(levelSpeedForLevel(lvl))} px/s`
+      ].join('<br>');
+    }
+    if (ui.startLevelBtn) {
+      ui.startLevelBtn.disabled = !canStart;
+      ui.startLevelBtn.textContent = locked ? 'Locked' : 'Start';
+    }
+  }
+
+  function selectMeteorLevel(level){
+    window.selectedLevel = level;
+    try{ game.best = getMeteorBestForCurrentSelection(); }catch(e){}
+    renderLevels();
+    renderLevelDetail();
+  }
+
+  function openSelectedLevelReady(){
+    if (!selectedLevelIsStartable()) return;
+    if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
+    if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.modeLevels) ui.modeLevels.style.display = 'none';
+    if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
   }
 
   function renderLevels(){
@@ -1075,42 +1262,28 @@ function boot(){
     ui.levelsGrid.innerHTML = '';
     for (let i=1;i<=MAX_LEVELS;i++){
       const el = document.createElement('div');
-      el.className = 'level-item ' + (i<=unlockedLevel ? 'unlocked' : 'locked');
+      el.className = 'level-item ' + (i<=unlockedLevel ? 'unlocked' : 'locked') + (Number(window.selectedLevel) === i ? ' selected' : '');
       el.textContent = String(i);
       el.dataset.level = String(i);
       el.addEventListener('click', ()=>{
         const lvl = Number(el.dataset.level);
-        if (lvl > unlockedLevel) { ui.permMsg.textContent = 'Level locked'; return; }
-        // select level
-        window.selectedLevel = lvl;
-        // load per-level best for HUD and overlays
-        try{
-          game.best = getMeteorLevelBest(lvl);
-        }catch(e){ console.warn('load per-level best failed', e); }
-        // hide menus since we're about to play
-        if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
-        if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
-        if (ui.modeLevels) ui.modeLevels.style.display = 'none';
-        // show ready overlay
-        if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+        selectMeteorLevel(lvl);
       });
       ui.levelsGrid.appendChild(el);
     }
     // add a Survival mode tile after the regular levels
     const surv = document.createElement('div');
-    surv.className = 'level-item unlocked survival';
+    surv.className = 'level-item unlocked survival' + (window.selectedLevel === 'survival' ? ' selected' : '');
     surv.textContent = 'Survival';
     surv.dataset.level = 'survival';
     surv.addEventListener('click', ()=>{
-      window.selectedLevel = 'survival';
-      try{ game.best = getMeteorSurvivalBest(); }catch(e){}
-      if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
-      if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
-      if (ui.modeLevels) ui.modeLevels.style.display = 'none';
-      if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+      selectMeteorLevel('survival');
     });
     ui.levelsGrid.appendChild(surv);
+    renderLevelDetail();
   }
+
+  if (ui.startLevelBtn) ui.startLevelBtn.addEventListener('click', openSelectedLevelReady);
 
   // when level completes, unlock next and show menu
   function levelComplete(){
@@ -1120,7 +1293,8 @@ function boot(){
     const prevBest = getMeteorLevelBest(lvl);
     const isNew = game.score > prevBest;
     if (isNew) setMeteorLevelBest(lvl, game.score);
-    finishProfileRun({ score: game.score, completedLevel: lvl });
+    const reward = finishProfileRun({ score: game.score, completedLevel: lvl, won: true });
+    setInGameActionsVisible(false);
 
     // graceful fallback: if overlay DOM isn't available, show a simple message
     if (!ui || !ui.overlay){
@@ -1157,6 +1331,8 @@ function boot(){
 
       // show overlay and hide floating actions
       ui.overlay.style.display = 'flex';
+      showCoinReward(reward);
+      setInGameActionsVisible(false);
       if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
       if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = 'none';
       if (ui.modeLevels) ui.modeLevels.style.display = 'none';
@@ -1177,6 +1353,8 @@ function boot(){
 
     // start or restart game
     resetGame();
+    resetCoinReward();
+    setInGameActionsVisible(false);
     if (ui.overlay) ui.overlay.style.display = 'none';
     // configure selected level if any
       if (window.selectedLevel){
@@ -1195,9 +1373,7 @@ function boot(){
     if (mode === 'mic'){
       const ok = await ensureMic();
       if (!ok){
-        game.started = false;
-        if (ui.permMsg) ui.permMsg.textContent = audio.lastError || 'Microphone permission denied or unavailable.';
-        return;
+        if (ui.permMsg) ui.permMsg.textContent = `${audio.lastError || 'Microphone permission denied or unavailable.'} Game is still running.`;
       }
       if (ui.a4) A4 = Number(ui.a4.value)||440;
     } else if (mode === 'midi'){
@@ -1215,7 +1391,7 @@ function boot(){
         game.levelBanner = { t: 0, life: 2.0, level: 'Survival' };
         try{ game.best = getMeteorSurvivalBest(); }catch(e){}
         // ensure base speed starts like level 1
-        game.baseSpeed = game.baseBaseSpeed;
+        game.baseSpeed = levelSpeedForLevel(1);
       } else {
         const lvl = Number(window.selectedLevel) || 1;
         game.level = lvl;
@@ -1228,6 +1404,7 @@ function boot(){
       game.best = getMeteorBestForCurrentSelection();
     }catch(e){ console.warn('load meteor best on start failed', e); }
     startProfileRun('meteorSky');
+    setInGameActionsVisible(true);
     // If playing a mode/game (e.g., Meteor sky), start the game music.
     try{
       if (window.currentMode === 'meteor-sky'){
@@ -1388,6 +1565,7 @@ function showGameOver(){
   }catch(e){}
   ui.overlay.style.display = 'flex';
   ui.overlayScore.textContent = String(game.score);
+  setInGameActionsVisible(false);
   // if survival mode, update per-mode best
   try{
     if (game.survival){
@@ -1405,7 +1583,8 @@ function showGameOver(){
       ui.overlayBest.textContent = String(game.best);
     }
   }catch(e){ ui.overlayBest.textContent = String(game.best); }
-  finishProfileRun({ score: game.score });
+  const reward = finishProfileRun({ score: game.score });
+  showCoinReward(reward);
   // ensure the main menu button is visible in the Game Over popup
   if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = '';
   // hide floating actions while Game Over is displayed; restore only when Main menu is pressed
@@ -1416,6 +1595,7 @@ function showGameOver(){
 function hideGameOver(){
   if (!ui || !ui.overlay) return;
   ui.overlay.style.display = 'none';
+  resetCoinReward();
 }
 
 function spawnComet(){
@@ -1706,7 +1886,9 @@ function drawHUD(){
     ctx.fillStyle = 'rgba(6,8,14,0.6)';
     roundRect(ctx, bx, by, boxW, boxH, 8, true, false);
     ctx.fillStyle = '#eaf6ff'; ctx.font = '700 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const det = game.detected && game.detected.letter ? `${game.detected.letter} (${game.detected.db} dB)` : (game.detected && game.detected.freq ? `— (${game.detected.db} dB)` : 'No input');
+    const det = game.detected && game.detected.letter
+      ? `${game.detected.letter} (${game.detected.db} dB)`
+      : (game.detected && game.detected.freq ? `— (${game.detected.db} dB)` : (audio.running && micTrackIsLive() ? 'Listening' : 'No input'));
     ctx.fillText(det, bx + boxW/2, by + boxH/2);
     ctx.restore();
   }catch(e){}
@@ -1861,11 +2043,13 @@ function nrShowGameOver(){
   const prev = Number(nr.startBest) || getNoteReadingBest();
   const isNew = nr.score > prev;
   if (nr.score > getNoteReadingBest()){ nr.best = nr.score; setNoteReadingBest(nr.score); }
-  finishProfileRun({ score: nr.score });
+  const reward = finishProfileRun({ score: nr.score });
   if (!ui || !ui.overlay) return;
   const t = ui.overlay.querySelector('.go-title') || ui.overlay.querySelector('h2');
   if (t){ t.textContent = 'Game Over!'; t.style.color = '#ff6b6b'; }
   ui.overlay.style.display = 'flex';
+  showCoinReward(reward);
+  setInGameActionsVisible(false);
   if (ui.overlayScore) ui.overlayScore.textContent = String(nr.score);
   if (ui.overlayBest) ui.overlayBest.textContent = String(Math.max(nr.score, prev));
   const eb = ui.overlayScore && ui.overlayScore.parentElement && ui.overlayScore.parentElement.querySelector('.new-high');
@@ -2068,7 +2252,7 @@ function drawNRHUD(){
   ctx.textAlign='center'; ctx.textBaseline='middle';
   const det = game.detected && game.detected.letter
     ? game.detected.letter + ' (' + game.detected.db + ' dB)'
-    : 'Listening...';
+    : (game.detected && game.detected.freq ? '— (' + game.detected.db + ' dB)' : (audio.running && micTrackIsLive() ? 'Listening' : 'No input'));
   ctx.fillText(det, dbx+dbW/2, dby+dbH/2); ctx.restore();
 }
 
@@ -2109,9 +2293,6 @@ function stepNoteReading(dt){
     if (nr.currentNote) {
       ctx.save(); ctx.globalAlpha=0.3; drawNoteOnStaff(nr.currentNote); ctx.restore();
     }
-  } else {
-    ctx.save(); ctx.fillStyle='#ffff00'; ctx.font='bold 16px monospace';
-    ctx.textAlign='center'; ctx.fillText('active:'+nr.active+' over:'+nr.over, W/2, H/2 - 20); ctx.restore();
   }
 
   drawNRTimerBar(nr.timerMax > 0 ? nr.timerRemaining / nr.timerMax : 0);
@@ -2120,6 +2301,8 @@ function stepNoteReading(dt){
 
 async function startNoteReading(){
   nrReset(); nr.active = true;
+  resetCoinReward();
+  setInGameActionsVisible(true);
   // hide any overlays from previous games
   if (ui.overlay) ui.overlay.style.display = 'none';
   if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
@@ -2127,9 +2310,7 @@ async function startNoteReading(){
   nrSpawnNote();
   console.log('NR started, note:', nr.currentNote, 'active:', nr.active);
   if (!(await ensureMic())){
-    nr.active = false;
-    if (ui.permMsg) ui.permMsg.textContent = audio.lastError || 'Microphone permission denied.';
-    return;
+    if (ui.permMsg) ui.permMsg.textContent = `${audio.lastError || 'Microphone permission denied.'} Game is still running.`;
   }
   startProfileRun('noteReading');
   try{ stopMenuMusic(); }catch(e){}
@@ -2184,8 +2365,8 @@ function step(ts){
     if (game.level) {
       game.speedFactor = 1;
     } else if (game.survival) {
-      // want currentSpeed = baseBaseSpeed + 1 * time
-      game.speedFactor = (game.baseBaseSpeed + game.time) / game.baseBaseSpeed;
+      // want currentSpeed = level 1 speed + 1 px/s each second
+      game.speedFactor = (levelSpeedForLevel(1) + game.time) / Math.max(1, game.baseSpeed);
     } else {
       game.speedFactor = 1 + game.time * 0.02;
     }

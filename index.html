@@ -16,11 +16,19 @@
 <div class="wrap">
   <div class="panel gameShell">
     <canvas id="game" width="360" height="640" aria-label="game canvas"></canvas>
+    <div id="inGameActions" class="in-game-actions" style="display:none">
+      <button id="inGameMenuBtn">Main menu</button>
+    </div>
     <div id="gameOverOverlay" class="game-over-overlay" style="display:none">
       <div class="go-card">
         <h2 class="go-title">Game Over!</h2>
         <div class="go-score">Score: <span id="overlayScore">0</span></div>
         <div class="go-best">Best: <span id="overlayBest">0</span></div>
+        <div id="coinReward" class="coin-reward" style="display:none">
+          <div class="coin-earned">+<span id="overlayCoinsEarned">0</span> coins</div>
+          <div id="overlayCoinDetails" class="coin-details"></div>
+          <div class="coin-total">Total: <span id="overlayCoinTotal">0</span></div>
+        </div>
         <div class="go-buttons">
           <button id="playAgainBtn" class="primary">Play again</button>
           <button id="selectLevelBtn">Select level</button>
@@ -58,6 +66,13 @@
             <div id="modeLevels" class="mode-levels" style="display:none">
               <div class="levels-header">Levels</div>
               <div id="levelsGrid" class="levels-grid"></div>
+              <div id="levelDetail" class="level-detail" style="display:none">
+                <div>
+                  <div id="levelDetailTitle" class="level-detail-title">Select a level</div>
+                  <div id="levelDetailStats" class="level-detail-stats"></div>
+                </div>
+                <button id="startLevelBtn" class="primary">Start</button>
+              </div>
             </div>
           </div>
         </div>

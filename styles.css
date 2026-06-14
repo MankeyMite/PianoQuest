@@ -4,6 +4,7 @@ header { padding:10px 12px; display:flex; gap:8px; align-items:center; backgroun
 h1 { font-size:15px; margin:0; font-weight:700; }
 button, input { font:inherit; border-radius:10px; border:1px solid var(--edge); padding:8px 12px; background:#141a2b; color:var(--fg); }
 button.primary { background:#2a3352; border-color:#3a4470; }
+button:disabled { opacity:0.45; cursor:not-allowed; filter:grayscale(0.4); }
 .wrap { display:grid; grid-template-columns: 1fr; gap:10px; padding:10px; max-width: 480px; margin: 0 auto 14px; }
 .panel { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:10px; }
 .gameShell { position:relative; }
@@ -13,6 +14,23 @@ canvas { image-rendering: pixelated; width: 100%; height: auto; border-radius: 1
 .fill { height:100%; width:0; background:linear-gradient(90deg,#4ea1ff,#89f7fe); }
 .stat { font-variant-numeric: tabular-nums; }
 small { color:#a9b3cf; }
+
+.in-game-actions {
+	position:absolute;
+	left:14px;
+	bottom:14px;
+	display:flex;
+	z-index:3;
+}
+.in-game-actions button {
+	border-radius:8px;
+	padding:7px 11px;
+	font-size:12px;
+	font-weight:900;
+	background:rgba(12,16,30,0.82);
+	border-color:rgba(255,255,255,0.22);
+	box-shadow:0 8px 18px rgba(0,0,0,0.35);
+}
 
 /* small helper to reduce canvas aliasing on some browsers */
 canvas { image-rendering: pixelated; }
@@ -47,6 +65,53 @@ canvas { image-rendering: pixelated; }
 	-webkit-text-stroke: 2px rgba(120,10,10,0.6);
 }
 .go-score, .go-best { font-size: 18px; margin: 6px 0; color:#ffdede }
+.coin-reward {
+	margin: 12px auto 4px;
+	padding: 10px;
+	border-radius: 10px;
+	background: rgba(255,210,77,0.11);
+	border: 1px solid rgba(255,210,77,0.38);
+	box-shadow: 0 0 24px rgba(255,180,60,0.12) inset;
+}
+.coin-earned {
+	font-size: 26px;
+	line-height: 1;
+	font-weight: 900;
+	color: #ffd24d;
+	text-shadow: 0 2px 0 rgba(70,35,0,0.8), 0 0 12px rgba(255,210,77,0.35);
+}
+.coin-earned span {
+	display: inline-block;
+	min-width: 2ch;
+	font-variant-numeric: tabular-nums;
+	transform-origin: center;
+}
+.coin-details {
+	margin-top: 7px;
+	font-size: 12px;
+	color: #ffe8a3;
+	min-height: 15px;
+}
+.coin-total {
+	margin-top: 6px;
+	color: #fff7d1;
+	font-size: 15px;
+	font-weight: 800;
+}
+.coin-total span {
+	display: inline-block;
+	min-width: 2ch;
+	font-variant-numeric: tabular-nums;
+	transform-origin: center;
+}
+.coin-earned span.counting,
+.coin-total span.counting {
+	animation: coinPulse 260ms ease-in-out infinite alternate;
+}
+@keyframes coinPulse {
+	from { transform: scale(1); color:#fff7d1; }
+	to { transform: scale(1.24); color:#ffd24d; }
+}
 .go-buttons { display:flex; gap:10px; justify-content:center; margin-top:12px }
 .go-buttons button { min-width:110px }
 
@@ -163,6 +228,30 @@ canvas { image-rendering: pixelated; }
 .level-item { width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:8px; background:rgba(255,255,255,0.02); cursor:pointer; font-weight:700 }
 .level-item.locked { opacity:0.28; cursor:not-allowed; filter:grayscale(0.6) }
 .level-item.unlocked { box-shadow: 0 6px 12px rgba(0,0,0,0.35) }
+.level-item.selected {
+	outline: 2px solid #ffd24d;
+	background: rgba(255,210,77,0.14);
+	color: #ffffff;
+}
+.level-detail {
+	display:flex;
+	align-items:flex-end;
+	justify-content:space-between;
+	gap:12px;
+	margin-top:12px;
+	padding:10px;
+	border-radius:8px;
+	background:rgba(255,255,255,0.04);
+	border:1px solid rgba(255,255,255,0.08);
+}
+.level-detail-title { font-size:18px; font-weight:900; color:#ffffff; }
+.level-detail-stats {
+	margin-top:5px;
+	font-size:13px;
+	line-height:1.45;
+	color:#bcd3ef;
+}
+.level-detail button { flex:0 0 auto; align-self:flex-end; min-width:96px; }
 .level-timer { color:#eaf6ff; font-weight:700 }
 
 .profile-panel { color:#eaf6ff; }
