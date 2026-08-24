@@ -26,6 +26,11 @@ function nearestMidiNatural(freq){
   return { midi: pick, letter: NOTE_NAMES[((pick % 12) + 12) % 12] };
 }
 
+function nearestMidiChromatic(freq){
+  const midi = Math.round(freqToMidi(freq));
+  return { midi, cents: centsOff(freq, midi) };
+}
+
 /* -------------- Pitch detection (autocorrelation) -------------- */
 function autoCorrelate(buf, sampleRate) {
   const N = buf.length;
@@ -102,6 +107,9 @@ function boot(){
     settingsPanel: document.getElementById('settingsPanel'),
     backBtn: document.getElementById('backBtn'),
     readyOverlay: document.getElementById('readyOverlay'),
+    readyTitle: document.querySelector('#readyOverlay .ready-title'),
+    readySub: document.querySelector('#readyOverlay .ready-sub'),
+    readyInstructions: document.getElementById('readyInstructions'),
     musicToggle: document.getElementById('musicToggle'),
     musicVolume: document.getElementById('musicVolume'),
     settingsCloseBtn: document.getElementById('settingsCloseBtn'),
@@ -113,6 +121,14 @@ function boot(){
     levelDetailStats: document.getElementById('levelDetailStats'),
     startLevelBtn: document.getElementById('startLevelBtn'),
     levelTimer: document.getElementById('levelTimer'),
+    noteReadingSetup: document.getElementById('noteReadingSetup'),
+    nrDifficulty: document.getElementById('nrDifficulty'),
+    nrTrebleClef: document.getElementById('nrTrebleClef'),
+    nrBassClef: document.getElementById('nrBassClef'),
+    nrSharps: document.getElementById('nrSharps'),
+    nrFlats: document.getElementById('nrFlats'),
+    nrSetupSummary: document.getElementById('nrSetupSummary'),
+    nrStartBtn: document.getElementById('nrStartBtn'),
     // calibration UI refs
     calibrateBtn: document.getElementById('calibrateBtn'),
     calibPanel: document.getElementById('calibPanel'),
@@ -641,6 +657,12 @@ function boot(){
       if (ui.detCents) ui.detCents.textContent = '0 ¢';
       if (ui.status) ui.status.textContent = `MIDI: note ${note} on (shifted to ${shifted})`;
 
+      if (nr.active && !nr.over){
+        const hit = nrCheckMidi(shifted);
+        console.log('MIDI note-reading input', note, 'shifted', shifted, name, 'hit?', hit);
+        return;
+      }
+
       // Try direct letter match from the shifted MIDI note
       const letter = NOTE_NAMES[((shifted % 12) + 12) % 12];
       const hit = matchLowestByLetter(letter);
@@ -671,9 +693,10 @@ function boot(){
             const points = Math.floor(1 + frac * 9);
             addScore(points);
         }catch(e){ addScore(1); }
-        game.comets.splice(idx,1);
-        game.lastHitAt = now;
-        return true;
+      game.comets.splice(idx,1);
+      game.lastHitAt = now;
+      registerTutorialHit(target.note);
+      return true;
       }
     }
     return false;
@@ -826,29 +849,11 @@ function boot(){
         const k = (ev.key || '').toUpperCase();
         if (!/^[A-G]$/.test(k)) return;
 
-        // Note Reading mode: match by letter name only (octave doesn't matter)
+        // Note Reading keyboard fallback: A-G, Shift+A-G for sharps, Alt+A-G for flats.
         if (nr.active && !nr.over && nr.currentNote) {
-          if (k === nr.currentNote.name) {
-            const elapsed = (performance.now() - nr.noteSpawnTime) / 1000;
-            const frac = Math.max(0, 1 - elapsed / nr.timerMax);
-            const points = Math.max(1, Math.ceil(10 * frac));
-            nr.score += points;
-            nr.lastPoints = points;
-            nr.flashCorrect = 1.0;
-            nr.scorePop = Math.min(2.5, 0.6 + Math.sqrt(points) * 0.18);
-            nr.lastAdd = { val: points, t: 0, life: 1.0 };
-            // particles
-            const nx = NR_NX, ny = nrY(nr.currentNote.staffPos);
-            for (let i = 0; i < 20; i++){
-              nr.particles.push({ x:nx+(Math.random()-.5)*10, y:ny+(Math.random()-.5)*10,
-                vx:(Math.random()*2-1)*80, vy:(Math.random()*2-1)*80,
-                life:0.5+Math.random()*0.5, t:0,
-                color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
-            }
-            if (nr.score > nr.best){ nr.best = nr.score; setNoteReadingBest(nr.best); }
-            nr.timerMax = Math.max(2, nr.timerMax - 0.5);
-            nrSpawnNote();
-          }
+          ev.preventDefault();
+          const accidental = ev.altKey ? 'b' : (ev.shiftKey ? '#' : '');
+          nrCheckKeyboard(k, accidental);
           return;  // don't fall through to meteor-sky handler
         }
 
@@ -902,15 +907,15 @@ function boot(){
         window.currentMode = mode;
 
         if (mode === 'note-reading') {
-          // Note reading has no levels; go straight to ready overlay
+          // Note reading has its own clef, range, and accidental setup.
           window.selectedLevel = null;
-          if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
-          if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
           if (ui.profilePanel) ui.profilePanel.style.display = 'none';
           if (ui.modeLevels) ui.modeLevels.style.display = 'none';
-          if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+          if (ui.noteReadingSetup) ui.noteReadingSetup.style.display = 'grid';
+          updateNoteReadingSetupSummary();
           return;
         }
+        if (ui.noteReadingSetup) ui.noteReadingSetup.style.display = 'none';
         // hide menu and panels
         // keep main menu open but reveal the levels panel for this mode
         if (ui.modeLevels) ui.modeLevels.style.display = 'block';
@@ -921,6 +926,39 @@ function boot(){
       });
     }
   }
+
+  function selectedNoteReadingClefs(){
+    const clefs = [];
+    if (ui.nrTrebleClef && ui.nrTrebleClef.checked) clefs.push('treble');
+    if (ui.nrBassClef && ui.nrBassClef.checked) clefs.push('bass');
+    return clefs;
+  }
+
+  function updateNoteReadingSetupSummary(){
+    if (!ui.nrSetupSummary) return;
+    const clefs = selectedNoteReadingClefs();
+    const difficulty = ui.nrDifficulty ? ui.nrDifficulty.options[ui.nrDifficulty.selectedIndex].text : 'Beginner';
+    const extras = [];
+    if (ui.nrSharps && ui.nrSharps.checked) extras.push('sharps');
+    if (ui.nrFlats && ui.nrFlats.checked) extras.push('flats');
+    const clefText = clefs.length === 2 ? 'G and bass clefs' : (clefs[0] === 'bass' ? 'Bass clef' : 'G clef');
+    ui.nrSetupSummary.textContent = clefs.length
+      ? `${difficulty} · ${clefText} · ${extras.length ? extras.join(' and ') : 'natural notes only'}`
+      : 'Choose at least one clef.';
+    if (ui.nrStartBtn) ui.nrStartBtn.disabled = clefs.length === 0;
+  }
+
+  for (const control of [ui.nrDifficulty, ui.nrTrebleClef, ui.nrBassClef, ui.nrSharps, ui.nrFlats]){
+    if (control) control.addEventListener('change', updateNoteReadingSetupSummary);
+  }
+  if (ui.nrStartBtn) ui.nrStartBtn.addEventListener('click', ()=>{
+    if (!selectedNoteReadingClefs().length) return;
+    configureReadyOverlay();
+    if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
+    if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
+    if (ui.noteReadingSetup) ui.noteReadingSetup.style.display = 'none';
+    if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+  });
 
   // floating actions (visible over banner) should reveal the menu card and panels
   if (ui.chooseModeBtn) ui.chooseModeBtn.addEventListener('click', ()=>{
@@ -1227,13 +1265,19 @@ function boot(){
     const lvl = Number(selected) || 1;
     const locked = lvl > unlockedLevel;
     const completed = Boolean(activeStats().levelsCompleted[String(lvl)]);
-    if (ui.levelDetailTitle) ui.levelDetailTitle.textContent = `Level ${lvl}`;
+    if (ui.levelDetailTitle) ui.levelDetailTitle.textContent = lvl === 1 ? 'Level 1 · Tutorial' : `Level ${lvl}`;
     if (ui.levelDetailStats) {
-      ui.levelDetailStats.innerHTML = [
+      const details = [
         `Best score: <strong>${getMeteorLevelBest(lvl)}</strong>`,
-        `Status: ${locked ? 'Locked' : (completed ? 'Completed' : 'Unlocked')}`,
-        `Speed: ${Math.round(levelSpeedForLevel(lvl))} px/s`
-      ].join('<br>');
+        `Status: ${locked ? 'Locked' : (completed ? 'Completed' : 'Unlocked')}`
+      ];
+      if (lvl === 1) {
+        details.push('Goal: Destroy 5 guided meteors');
+        details.push('Practice mode: No timer or missed-note penalty');
+      } else {
+        details.push(`Speed: ${Math.round(levelSpeedForLevel(lvl))} px/s`);
+      }
+      ui.levelDetailStats.innerHTML = details.join('<br>');
     }
     if (ui.startLevelBtn) {
       ui.startLevelBtn.disabled = !canStart;
@@ -1250,10 +1294,40 @@ function boot(){
 
   function openSelectedLevelReady(){
     if (!selectedLevelIsStartable()) return;
+    configureReadyOverlay();
     if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
     if (ui.chooseModePanel) ui.chooseModePanel.style.display = 'none';
     if (ui.modeLevels) ui.modeLevels.style.display = 'none';
     if (ui.readyOverlay) ui.readyOverlay.style.display = 'flex';
+  }
+
+  function configureReadyOverlay(){
+    const tutorial = window.currentMode === 'meteor-sky' && Number(window.selectedLevel) === 1;
+    const noteReading = window.currentMode === 'note-reading';
+    if (ui.readyTitle) ui.readyTitle.textContent = tutorial ? 'Tutorial' : (noteReading ? 'Note Reading' : 'Ready?');
+    if (ui.readySub) {
+      ui.readySub.textContent = tutorial
+        ? 'Destroy 5 meteors to finish the lesson.'
+        : (noteReading && ui.nrSetupSummary ? ui.nrSetupSummary.textContent : 'Click to start');
+    }
+    if (!ui.readyInstructions) return;
+    ui.readyInstructions.style.display = (tutorial || noteReading) ? 'grid' : 'none';
+    if (tutorial){
+      ui.readyInstructions.innerHTML = [
+        '<div><strong>1.</strong> Find the lowest meteor.</div>',
+        '<div><strong>2.</strong> Play its letter on your piano.</div>',
+        '<div><strong>3.</strong> Microphone, MIDI, and A–G keyboard keys all work.</div>',
+        '<div class="ready-go">Click anywhere to begin</div>'
+      ].join('');
+    } else if (noteReading){
+      ui.readyInstructions.innerHTML = [
+        '<div><strong>Play</strong> the written pitch before time runs out.</div>',
+        '<div><strong>Computer keys:</strong> A–G for naturals, Shift for sharps, Alt for flats.</div>',
+        '<div class="ready-go">Click anywhere to begin</div>'
+      ].join('');
+    } else {
+      ui.readyInstructions.innerHTML = '';
+    }
   }
 
   function renderLevels(){
@@ -1261,8 +1335,9 @@ function boot(){
     ui.levelsGrid.innerHTML = '';
     for (let i=1;i<=MAX_LEVELS;i++){
       const el = document.createElement('div');
-      el.className = 'level-item ' + (i<=unlockedLevel ? 'unlocked' : 'locked') + (Number(window.selectedLevel) === i ? ' selected' : '');
-      el.textContent = String(i);
+      el.className = 'level-item ' + (i<=unlockedLevel ? 'unlocked' : 'locked') + (Number(window.selectedLevel) === i ? ' selected' : '') + (i === 1 ? ' tutorial' : '');
+      if (i === 1) el.innerHTML = '<span>1</span><small>Tutorial</small>';
+      else el.textContent = String(i);
       el.dataset.level = String(i);
       el.addEventListener('click', ()=>{
         const lvl = Number(el.dataset.level);
@@ -1349,8 +1424,10 @@ function boot(){
   /* ------------------- Unified Start (mic or midi) ------------------- */
   async function startGame(mode){
     mode = mode || (ui.inputSelect ? ui.inputSelect.value : 'mic');
+    const isTutorialLevel = window.selectedLevel !== 'survival' && Number(window.selectedLevel) === 1;
 
     // start or restart game
+    game.livesMax = 3;
     resetGame();
     resetCoinReward();
     setInGameActionsVisible(false);
@@ -1359,11 +1436,14 @@ function boot(){
       if (window.selectedLevel){
       const lvl = Number(window.selectedLevel) || 1;
       game.level = lvl;
-      game.levelDuration = 60; // seconds per level
+      game.levelDuration = isTutorialLevel ? null : 60; // tutorial is goal-based; other levels are timed
       game.levelTimeRemaining = game.levelDuration;
-      game.currentSpawnInterval = spawnIntervalForLevel(lvl);
+      game.currentSpawnInterval = isTutorialLevel ? 3200 : spawnIntervalForLevel(lvl);
       game.baseSpeed = game.baseBaseSpeed * speedMultiplierForLevel(lvl);
-        if (ui.levelTimer) { ui.levelTimer.textContent = `Level ${lvl}: ${game.levelTimeRemaining.toFixed(0)}s`; ui.levelTimer.style.display = 'none'; }
+        if (ui.levelTimer) {
+          ui.levelTimer.textContent = isTutorialLevel ? 'Tutorial: 0 / 5' : `Level ${lvl}: ${game.levelTimeRemaining.toFixed(0)}s`;
+          ui.levelTimer.style.display = 'none';
+        }
     } else {
       game.level = null; game.currentSpawnInterval = null; game.levelTimeRemaining = 0;
         if (ui.levelTimer) { ui.levelTimer.textContent = ''; ui.levelTimer.style.display = ''; }
@@ -1394,7 +1474,18 @@ function boot(){
       } else {
         const lvl = Number(window.selectedLevel) || 1;
         game.level = lvl;
-        game.levelBanner = { t: 0, life: 2.0, level: Number(window.selectedLevel) };
+        game.levelBanner = { t: 0, life: isTutorialLevel ? 3.2 : 2.0, level: Number(window.selectedLevel) };
+        if (isTutorialLevel) {
+          game.tutorial = {
+            active: true,
+            hits: 0,
+            goal: 5,
+            noteSequence: ['C','D','E','F','G'],
+            feedback: 'Watch for your first meteor…',
+            feedbackUntil: performance.now() + 2200
+          };
+          game.nextSpawnTime = performance.now() + 2200;
+        }
       }
     } else {
       game.levelBanner = null;
@@ -1529,7 +1620,8 @@ const game = {
   lastSpawn:0,
   baseSpeed: 30,
   speedFactor: 1,
-  lastHitAt: 0
+  lastHitAt: 0,
+  tutorial: null
 };
 // transient score pop state (for center big score)
 game.scorePop = 0; // visual pop strength (decays)
@@ -1563,6 +1655,7 @@ function resetGame(){
   game.spawnAccumulator = 0;
   game.nextSpawnTime = 0;
   game.survival = false;
+  game.tutorial = null;
 }
 
 function clearPlanetExplosion(){
@@ -1670,7 +1763,10 @@ function hideGameOver(){
 }
 
 function spawnComet(){
-  const note = NATURAL_POOL[Math.floor(Math.random()*NATURAL_POOL.length)];
+  const tutorial = game.tutorial && game.tutorial.active ? game.tutorial : null;
+  const note = tutorial
+    ? tutorial.noteSequence[Math.min(tutorial.hits, tutorial.noteSequence.length - 1)]
+    : NATURAL_POOL[Math.floor(Math.random()*NATURAL_POOL.length)];
   const margin = 20;
   // pick an x that isn't too close to the last spawned comet to avoid visual overlap
   let x = margin + Math.random()*(W - margin*2);
@@ -1698,6 +1794,23 @@ function lowestCometIndex(){
 function currentTargetComet(){
   const idx = lowestCometIndex();
   return idx >= 0 ? game.comets[idx] : null;
+}
+
+function registerTutorialHit(note){
+  const tutorial = game.tutorial;
+  if (!tutorial || !tutorial.active) return;
+  tutorial.hits += 1;
+  tutorial.feedback = `Great! You played ${note}.`;
+  tutorial.feedbackUntil = performance.now() + 1100;
+  if (ui.levelTimer) ui.levelTimer.textContent = `Tutorial: ${tutorial.hits} / ${tutorial.goal}`;
+
+  if (tutorial.hits >= tutorial.goal){
+    tutorial.active = false;
+    game.started = false;
+    levelComplete();
+    return;
+  }
+  game.nextSpawnTime = performance.now() + 1200;
 }
 
 function alignShipToCurrentTarget(){
@@ -1954,12 +2067,16 @@ function drawLevelBanner(){
   ctx.fillStyle = '#ffd24d';
   ctx.lineWidth = 6;
   ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  const title = `Level ${level}`;
+  const isTutorial = Number(level) === 1 && game.tutorial && game.tutorial.active;
+  const title = isTutorial ? 'Tutorial' : `Level ${level}`;
   ctx.strokeText(title, W/2, y + 34);
   ctx.fillText(title, W/2, y + 34);
 
-  // subtitle (omit for level 1)
-  if (level > 1) {
+  if (isTutorial) {
+    ctx.font = '700 14px monospace';
+    ctx.fillStyle = '#dfefff';
+    ctx.fillText('Play the letter on the lowest meteor', W/2, y + 72);
+  } else if (level > 1) {
     ctx.font = '600 14px monospace';
     ctx.fillStyle = '#dfefff';
     ctx.fillText('the meteors are getting faster...', W/2, y + 66);
@@ -1991,31 +2108,36 @@ function drawHUD(){
   ctx.fillStyle = '#ffdede';
   ctx.fillText(String(game.best), 8 + bestLabelW, 30);
 
-  // draw hearts for lives (shifted down to make room for best)
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 12px monospace';
-  const heartY = 46;
-  const heartSize = 14;
-  const spacing = 8;
-  // shift hearts slightly left to remove awkward space
-  const startX = 8 + 12;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  for (let i = 0; i < (game.livesMax || 3); i++){
-    const cx = startX + i * (heartSize + spacing);
-    const pop = (game.heartPops && game.heartPops[i]) ? game.heartPops[i] : 0;
-    const scale = 1 + 0.6 * pop;
-    const isFilled = i < game.lives;
-    ctx.save();
-    ctx.translate(cx, heartY);
-    ctx.scale(scale, scale);
-    ctx.font = `${heartSize}px serif`;
-    if (isFilled){
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2; ctx.strokeText('❤', 0, 0);
-      ctx.fillStyle = '#ff4d4d'; ctx.fillText('❤', 0, 0);
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillText('❤', 0, 0);
+  if (game.tutorial && game.tutorial.active){
+    ctx.font = '700 11px monospace';
+    ctx.fillStyle = '#7be1ff';
+    ctx.fillText('Practice mode · no penalties', 8, 48);
+  } else {
+    // draw hearts for lives (shifted down to make room for best)
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px monospace';
+    const heartY = 46;
+    const heartSize = 14;
+    const spacing = 8;
+    const startX = 8 + 12;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 0; i < (game.livesMax || 3); i++){
+      const cx = startX + i * (heartSize + spacing);
+      const pop = (game.heartPops && game.heartPops[i]) ? game.heartPops[i] : 0;
+      const scale = 1 + 0.6 * pop;
+      const isFilled = i < game.lives;
+      ctx.save();
+      ctx.translate(cx, heartY);
+      ctx.scale(scale, scale);
+      ctx.font = `${heartSize}px serif`;
+      if (isFilled){
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2; ctx.strokeText('❤', 0, 0);
+        ctx.fillStyle = '#ff4d4d'; ctx.fillText('❤', 0, 0);
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillText('❤', 0, 0);
+      }
+      ctx.restore();
     }
-    ctx.restore();
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillText(`Speed ${currentSpeed().toFixed(0)}px/s`, 8, 62);
@@ -2051,6 +2173,36 @@ function drawHUD(){
     ctx.fillText(det, bx + boxW/2, by + boxH/2);
     ctx.restore();
   }catch(e){}
+}
+
+function drawTutorialCoach(){
+  const tutorial = game.tutorial;
+  if (!tutorial || !tutorial.active) return;
+  if (game.levelBanner && game.levelBanner.t < game.levelBanner.life) return;
+
+  const target = currentTargetComet();
+  const showingFeedback = tutorial.feedback && performance.now() < tutorial.feedbackUntil;
+  const mainText = showingFeedback ? tutorial.feedback : (target ? `Play ${target.note}` : 'Get ready…');
+  const helperText = target ? 'Use your piano, MIDI, or an A–G key' : 'The next meteor is on its way';
+  const panelW = W - 48, panelH = 76, panelX = 24, panelY = 82;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(6,8,14,0.88)';
+  roundRect(ctx, panelX, panelY, panelW, panelH, 12, true, false);
+  ctx.strokeStyle = 'rgba(123,225,255,0.6)';
+  ctx.lineWidth = 2;
+  roundRect(ctx, panelX, panelY, panelW, panelH, 12, false, true);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '900 25px monospace';
+  ctx.fillStyle = showingFeedback ? '#7be1ff' : '#ffd24d';
+  ctx.fillText(mainText, W/2, panelY + 25);
+  ctx.font = '600 11px monospace';
+  ctx.fillStyle = '#dfefff';
+  ctx.fillText(helperText, W/2, panelY + 48);
+  ctx.font = '800 11px monospace';
+  ctx.fillStyle = '#9fb3d9';
+  ctx.fillText(`${tutorial.hits} / ${tutorial.goal} complete`, W/2, panelY + 65);
+  ctx.restore();
 }
 
 // small helper to draw rounded rects
@@ -2092,6 +2244,7 @@ function matchLowestCometIfAny(freq) {
 
       game.comets.splice(idx, 1);
       game.lastHitAt = now;
+      registerTutorialHit(target.note);
       return true;
     }
   }
@@ -2099,19 +2252,71 @@ function matchLowestCometIfAny(freq) {
 }
 
 /* ================ Note Reading Mini-Game ================ */
-// Note pool: A3 to C5 (naturals), staffPos relative to E4 (bottom line = 0)
-const NR_POOL = [
-  { midi:57, name:'A', octave:3, staffPos:-4 },
-  { midi:59, name:'B', octave:3, staffPos:-3 },
-  { midi:60, name:'C', octave:4, staffPos:-2 },
-  { midi:62, name:'D', octave:4, staffPos:-1 },
-  { midi:64, name:'E', octave:4, staffPos: 0 },
-  { midi:65, name:'F', octave:4, staffPos: 1 },
-  { midi:67, name:'G', octave:4, staffPos: 2 },
-  { midi:69, name:'A', octave:4, staffPos: 3 },
-  { midi:71, name:'B', octave:4, staffPos: 4 },
-  { midi:72, name:'C', octave:5, staffPos: 5 },
-];
+const NR_LETTERS = ['C','D','E','F','G','A','B'];
+const NR_SEMITONES = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+const NR_SHARPABLE = new Set(['C','D','F','G','A']);
+const NR_FLATTABLE = new Set(['D','E','G','A','B']);
+const NR_CLEF_BASE = { treble:{ letter:'E', octave:4 }, bass:{ letter:'G', octave:2 } };
+const NR_RANGES = {
+  beginner: {
+    treble:[{ letter:'E', octave:4 }, { letter:'F', octave:5 }],
+    bass:[{ letter:'G', octave:2 }, { letter:'A', octave:3 }]
+  },
+  intermediate: {
+    treble:[{ letter:'C', octave:4 }, { letter:'A', octave:5 }],
+    bass:[{ letter:'E', octave:2 }, { letter:'C', octave:4 }]
+  },
+  advanced: {
+    treble:[{ letter:'A', octave:3 }, { letter:'C', octave:6 }],
+    bass:[{ letter:'C', octave:2 }, { letter:'E', octave:4 }]
+  }
+};
+
+function nrDiatonicIndex(letter, octave){
+  return octave * 7 + NR_LETTERS.indexOf(letter);
+}
+
+function nrNaturalFromIndex(index){
+  const octave = Math.floor(index / 7);
+  return { letter:NR_LETTERS[index % 7], octave };
+}
+
+function nrBuildPool(settings){
+  const pool = [];
+  const ranges = NR_RANGES[settings.difficulty] || NR_RANGES.beginner;
+  for (const clef of settings.clefs){
+    const [low, high] = ranges[clef];
+    const base = NR_CLEF_BASE[clef];
+    const baseIndex = nrDiatonicIndex(base.letter, base.octave);
+    for (let index = nrDiatonicIndex(low.letter, low.octave); index <= nrDiatonicIndex(high.letter, high.octave); index++){
+      const natural = nrNaturalFromIndex(index);
+      const midiBase = (natural.octave + 1) * 12 + NR_SEMITONES[natural.letter];
+      const addNote = (accidental, offset)=>pool.push({
+        midi:midiBase + offset,
+        name:natural.letter,
+        accidental,
+        displayName:natural.letter + (accidental === '#' ? '♯' : (accidental === 'b' ? '♭' : '')),
+        octave:natural.octave,
+        staffPos:index - baseIndex,
+        clef
+      });
+      addNote('', 0);
+      if (settings.sharps && NR_SHARPABLE.has(natural.letter)) addNote('#', 1);
+      if (settings.flats && NR_FLATTABLE.has(natural.letter)) addNote('b', -1);
+    }
+  }
+  return pool;
+}
+
+function nrReadSettings(){
+  const clefs = selectedNoteReadingClefs();
+  return {
+    difficulty:ui.nrDifficulty ? ui.nrDifficulty.value : 'beginner',
+    clefs:clefs.length ? clefs : ['treble'],
+    sharps:Boolean(ui.nrSharps && ui.nrSharps.checked),
+    flats:Boolean(ui.nrFlats && ui.nrFlats.checked)
+  };
+}
 
 const nr = {
   active: false, over: false,
@@ -2128,6 +2333,8 @@ const nr = {
   scorePop: 0,
   lastAdd: { val:0, t:10, life:0 },
   particles: [],
+  settings: { difficulty:'beginner', clefs:['treble'], sharps:false, flats:false },
+  pool: [],
 };
 
 // Staff layout
@@ -2149,48 +2356,65 @@ function nrReset(){
   nr.scorePop = 0;
   nr.lastAdd = { val:0, t:10, life:0 };
   nr.particles = [];
+  nr.settings = nrReadSettings();
+  nr.pool = nrBuildPool(nr.settings);
   nr.best = getNoteReadingBest();
   nr.startBest = nr.best;
 }
 
 function nrSpawnNote(){
   let pick, attempts = 0;
-  do { pick = NR_POOL[Math.floor(Math.random() * NR_POOL.length)]; attempts++;
-  } while (nr.currentNote && pick.midi === nr.currentNote.midi && attempts < 20);
+  const pool = nr.pool.length ? nr.pool : nrBuildPool(nr.settings);
+  do { pick = pool[Math.floor(Math.random() * pool.length)]; attempts++;
+  } while (nr.currentNote && pick.midi === nr.currentNote.midi && pick.clef === nr.currentNote.clef && attempts < 20);
   nr.currentNote = { ...pick };
   nr.timerRemaining = nr.timerMax;
   nr.noteSpawnTime = performance.now();
   nr.round++;
 }
 
+function nrCompleteCurrentNote(){
+  if (!nr.active || nr.over || !nr.currentNote) return false;
+  const elapsed = (performance.now() - nr.noteSpawnTime) / 1000;
+  const frac = Math.max(0, 1 - elapsed / nr.timerMax);
+  const points = Math.max(1, Math.ceil(10 * frac));
+  nr.score += points;
+  nr.lastPoints = points;
+  nr.flashCorrect = 1.0;
+  nr.scorePop = Math.min(2.5, 0.6 + Math.sqrt(points) * 0.18);
+  nr.lastAdd = { val: points, t: 0, life: 1.0 };
+  const nx = NR_NX, ny = nrY(nr.currentNote.staffPos);
+  for (let i = 0; i < 20; i++){
+    nr.particles.push({ x:nx+(Math.random()-.5)*10, y:ny+(Math.random()-.5)*10,
+      vx:(Math.random()*2-1)*80, vy:(Math.random()*2-1)*80,
+      life:0.5+Math.random()*0.5, t:0,
+      color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
+  }
+  if (nr.score > nr.best){ nr.best = nr.score; setNoteReadingBest(nr.best); }
+  nr.timerMax = Math.max(2, nr.timerMax - 0.5);
+  nrSpawnNote();
+  return true;
+}
+
 function nrCheckMatch(freq){
   if (!nr.active || nr.over || !nr.currentNote) return false;
-  const { midi } = nearestMidiNatural(freq);
+  const detected = nearestMidiChromatic(freq);
   const tol = ui.tol ? (Number(ui.tol.value) || 35) : 35;
-  const cents = centsOff(freq, midi);
-  if (midi === nr.currentNote.midi && Math.abs(cents) <= tol){
-    const elapsed = (performance.now() - nr.noteSpawnTime) / 1000;
-    const frac = Math.max(0, 1 - elapsed / nr.timerMax);
-    const points = Math.max(1, Math.ceil(10 * frac));
-    nr.score += points;
-    nr.lastPoints = points;
-    nr.flashCorrect = 1.0;
-    nr.scorePop = Math.min(2.5, 0.6 + Math.sqrt(points) * 0.18);
-    nr.lastAdd = { val: points, t: 0, life: 1.0 };
-    // particles
-    const nx = NR_NX, ny = nrY(nr.currentNote.staffPos);
-    for (let i = 0; i < 20; i++){
-      nr.particles.push({ x:nx+(Math.random()-.5)*10, y:ny+(Math.random()-.5)*10,
-        vx:(Math.random()*2-1)*80, vy:(Math.random()*2-1)*80,
-        life:0.5+Math.random()*0.5, t:0,
-        color:['#4ade80','#a3e635','#facc15','#ffffff'][Math.floor(Math.random()*4)] });
-    }
-    if (nr.score > nr.best){ nr.best = nr.score; setNoteReadingBest(nr.best); }
-    nr.timerMax = Math.max(2, nr.timerMax - 0.5);
-    nrSpawnNote();
-    return true;
-  }
-  return false;
+  return detected.midi === nr.currentNote.midi && Math.abs(detected.cents) <= tol
+    ? nrCompleteCurrentNote()
+    : false;
+}
+
+function nrCheckMidi(midi){
+  if (!nr.active || nr.over || !nr.currentNote) return false;
+  return midi === nr.currentNote.midi ? nrCompleteCurrentNote() : false;
+}
+
+function nrCheckKeyboard(letter, accidental){
+  if (!nr.active || nr.over || !nr.currentNote) return false;
+  return letter === nr.currentNote.name && accidental === nr.currentNote.accidental
+    ? nrCompleteCurrentNote()
+    : false;
 }
 
 function nrShowGameOver(){
@@ -2288,6 +2512,28 @@ function drawTrebleClef(cx, gY, sp){
   }
 }
 
+function drawBassClef(cx, fY, sp){
+  // Canvas-drawn F clef so this mode does not need another image asset.
+  ctx.save();
+  ctx.translate(cx, fY);
+  ctx.fillStyle = '#111111';
+  ctx.beginPath();
+  ctx.arc(-sp * 0.28, 0, sp * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-sp * 0.25, -sp * 0.12);
+  ctx.bezierCurveTo(-sp * 0.35, -sp * 1.05, sp * 0.92, -sp * 1.2, sp * 0.78, -sp * 0.15);
+  ctx.bezierCurveTo(sp * 0.72, sp * 0.58, sp * 0.15, sp * 1.05, -sp * 0.5, sp * 1.18);
+  ctx.bezierCurveTo(sp * 0.18, sp * 0.72, sp * 0.45, sp * 0.18, -sp * 0.25, -sp * 0.12);
+  ctx.fill();
+  for (const offset of [-0.5, 0.5]){
+    ctx.beginPath();
+    ctx.arc(sp * 1.0, sp * offset, sp * 0.105, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawNoteOnStaff(note){
   if (!note) return;
   const ny = nrY(note.staffPos), nx = NR_NX, sp = NR_SP;
@@ -2319,6 +2565,14 @@ function drawNoteOnStaff(note){
     ctx.restore();
   }
   // note head (filled ellipse) — black for high contrast on light bg
+  if (note.accidental){
+    ctx.save();
+    ctx.font = `${Math.round(sp * 1.35)}px "Segoe UI Symbol", serif`;
+    ctx.fillStyle = '#111111';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(note.accidental === '#' ? '♯' : '♭', nx - sp * 1.05, ny - (note.accidental === 'b' ? sp * 0.12 : 0));
+    ctx.restore();
+  }
   const hw = sp * 0.48, hh = sp * 0.36;
   ctx.save();
   ctx.translate(nx, ny);
@@ -2381,6 +2635,11 @@ function drawNRHUD(){
   ctx.fillStyle = nr.timerRemaining < 2 ? '#d9534f' : '#222222';
   ctx.fillText(nr.timerRemaining.toFixed(1)+'s', W-8, 70);
   ctx.textAlign='left';
+  const clefLabel = nr.currentNote && nr.currentNote.clef === 'bass' ? 'Bass clef' : 'G clef';
+  const difficultyLabel = nr.settings.difficulty.charAt(0).toUpperCase() + nr.settings.difficulty.slice(1);
+  ctx.textAlign='center'; ctx.font='800 12px monospace'; ctx.fillStyle='#355064';
+  ctx.fillText(`${difficultyLabel} · ${clefLabel}`, W/2, 94);
+  ctx.textAlign='left';
   // fading +points
   if (nr.lastAdd && nr.lastAdd.t < nr.lastAdd.life){
     const fade = Math.max(0,1-nr.lastAdd.t/nr.lastAdd.life);
@@ -2414,8 +2673,14 @@ function drawNRHUD(){
 function stepNoteReading(dt){
   drawNRBg();
   drawNRStaff();
-  const gLineY = NR_BOT - NR_SP; // G4 = 2nd line from bottom
-  drawTrebleClef(NR_LEFT + 38, gLineY, NR_SP);
+  const activeClef = nr.currentNote ? nr.currentNote.clef : (nr.settings.clefs[0] || 'treble');
+  if (activeClef === 'bass'){
+    const fLineY = NR_BOT - NR_SP * 3; // F3 = 4th line from bottom
+    drawBassClef(NR_LEFT + 34, fLineY, NR_SP);
+  } else {
+    const gLineY = NR_BOT - NR_SP; // G4 = 2nd line from bottom
+    drawTrebleClef(NR_LEFT + 38, gLineY, NR_SP);
+  }
 
   if (nr.active && !nr.over){
     nr.timerRemaining -= dt;
@@ -2455,18 +2720,24 @@ function stepNoteReading(dt){
 }
 
 async function startNoteReading(){
-  nrReset(); nr.active = true;
+  nrReset();
   resetCoinReward();
   setInGameActionsVisible(true);
   // hide any overlays from previous games
   if (ui.overlay) ui.overlay.style.display = 'none';
   if (ui.mainMenuOverlay) ui.mainMenuOverlay.style.display = 'none';
-  // spawn first note immediately (before async mic setup)
-  nrSpawnNote();
-  console.log('NR started, note:', nr.currentNote, 'active:', nr.active);
-  if (!(await ensureMic())){
+  const inputMode = ui.inputSelect ? ui.inputSelect.value : 'mic';
+  if (inputMode === 'midi'){
+    stopMic();
+    if (!midiAccess) await initMIDI();
+    if (ui.permMsg) ui.permMsg.textContent = 'Using MIDI input.';
+  } else if (!(await ensureMic())){
     if (ui.permMsg) ui.permMsg.textContent = `${audio.lastError || 'Microphone permission denied.'} Game is still running.`;
   }
+  // Start the timer only after the chosen input is ready (or permission was declined).
+  nr.active = true;
+  nrSpawnNote();
+  console.log('NR started, note:', nr.currentNote, 'active:', nr.active);
   startProfileRun('noteReading');
   try{ stopMenuMusic(); }catch(e){}
   try{ stopGameMusic(); }catch(e){}
@@ -2531,7 +2802,13 @@ function step(ts){
       game.speedFactor = 1 + game.time * 0.02;
     }
     // spawn spacing: use level spawn interval when a level is active, otherwise fallback
-    if (game.level && game.currentSpawnInterval){
+    if (game.tutorial && game.tutorial.active){
+      // One guided meteor at a time gives the player space to read and respond.
+      if (game.comets.length === 0 && ts >= game.nextSpawnTime){
+        spawnComet();
+        game.lastSpawn = ts;
+      }
+    } else if (game.level && game.currentSpawnInterval){
       // use absolute nextSpawnTime scheduling so spawns remain evenly spaced
       if (!game.nextSpawnTime) game.nextSpawnTime = ts + game.currentSpawnInterval;
       if (ts >= game.nextSpawnTime) {
@@ -2565,6 +2842,13 @@ function step(ts){
       const c = game.comets[i];
       if (c.y >= groundY - c.r){
         explodeAt(c.x, groundY-3, c.note);
+        if (game.tutorial && game.tutorial.active){
+          game.comets.splice(i,1);
+          game.tutorial.feedback = 'Almost — try the next one!';
+          game.tutorial.feedbackUntil = performance.now() + 1400;
+          game.nextSpawnTime = performance.now() + 1500;
+          continue;
+        }
         try{ playCrashSfx(); }catch(e){}
         game.comets.splice(i,1);
         // trigger heart pop animation for the life that will be lost
@@ -2584,6 +2868,7 @@ function step(ts){
   drawHighScore();   // big juicy number
   drawLevelBanner();
   drawHUD();
+  drawTutorialCoach();
   ctx.restore();
   drawPlanetExplosion(planetFx);
   finishPlanetExplosionIfReady();
@@ -2731,9 +3016,18 @@ function updateAudio(){
     // record detection only if above threshold; otherwise ignore for matching
     if (dbApprox >= thresholdDb){
       const near = nearestMidiNatural(res.freq);
-      const detectedLetter = (near.letter || '').replace('#','');
-      const detectedCents = Math.round(centsOff(res.freq, near.midi));
-      // stability: require the same natural detected within tolerance for at least 100ms
+      const noteReadingActive = nr.active && !nr.over;
+      const chromaticMidi = Math.round(m);
+      const detectedLetter = noteReadingActive
+        ? `midi-${chromaticMidi}`
+        : (near.letter || '').replace('#','');
+      const detectedLabel = noteReadingActive
+        ? (nr.currentNote && chromaticMidi === nr.currentNote.midi
+          ? nr.currentNote.displayName
+          : NOTE_NAMES[((chromaticMidi % 12) + 12) % 12])
+        : near.letter;
+      const detectedCents = Math.round(centsOff(res.freq, noteReadingActive ? chromaticMidi : near.midi));
+      // Require the same pitch within tolerance for at least 100ms.
       const now = performance.now();
       const tol = ui && ui.tol ? Number(ui.tol.value) : (Number(localStorage.getItem('mic_tol_cents')) || 35);
       if (game._stable.letter === detectedLetter){
@@ -2745,7 +3039,7 @@ function updateAudio(){
         game._stable.letter = detectedLetter; game._stable.cents = detectedCents; game._stable.start = (Math.abs(detectedCents) <= tol) ? now : 0;
       }
 
-      game.detected = { freq: res.freq, letter: near.letter, cents: detectedCents, db: Math.round(dbApprox) };
+      game.detected = { freq: res.freq, letter: detectedLabel, cents: detectedCents, db: Math.round(dbApprox) };
       // flash visual
       if (game._stable.start) game.detectFlash = Math.max(game.detectFlash, 1.0);
       // debug panel update

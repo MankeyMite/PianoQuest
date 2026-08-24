@@ -74,6 +74,34 @@
                 <button id="startLevelBtn" class="primary">Start</button>
               </div>
             </div>
+            <div id="noteReadingSetup" class="note-reading-setup" style="display:none">
+              <div class="note-setup-title">Note Reading setup</div>
+              <label class="note-setting-row" for="nrDifficulty">
+                <span>
+                  <strong>Difficulty</strong>
+                  <small>Controls the range of notes</small>
+                </span>
+                <select id="nrDifficulty">
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate">Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </label>
+              <div class="note-setting-group">
+                <strong>Clefs</strong>
+                <small>With both enabled, the clef changes between notes.</small>
+                <label><input id="nrTrebleClef" type="checkbox" checked> G clef (treble)</label>
+                <label><input id="nrBassClef" type="checkbox"> Bass clef</label>
+              </div>
+              <div class="note-setting-group">
+                <strong>Accidentals</strong>
+                <small>Natural notes are always included.</small>
+                <label><input id="nrSharps" type="checkbox"> Include sharps ♯</label>
+                <label><input id="nrFlats" type="checkbox"> Include flats ♭</label>
+              </div>
+              <div id="nrSetupSummary" class="note-setup-summary"></div>
+              <button id="nrStartBtn" class="primary note-start-button">Continue</button>
+            </div>
           </div>
         </div>
 
@@ -185,6 +213,7 @@
       <div class="ready-card">
         <div class="ready-title">Ready?</div>
         <div class="ready-sub">click to start</div>
+        <div id="readyInstructions" class="ready-instructions" style="display:none"></div>
       </div>
     </div>
   </div>
