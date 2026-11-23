@@ -112,6 +112,7 @@ function boot(){
     readyInstructions: document.getElementById('readyInstructions'),
     musicToggle: document.getElementById('musicToggle'),
     musicVolume: document.getElementById('musicVolume'),
+    soundVolume: document.getElementById('soundVolume'),
     settingsCloseBtn: document.getElementById('settingsCloseBtn'),
     menuFloatingActions: document.querySelector('.menu-floating-actions'),
     modeLevels: document.getElementById('modeLevels'),
@@ -156,6 +157,8 @@ function boot(){
     profileNoteTime: document.getElementById('profileNoteTime'),
     profileSurvivalBest: document.getElementById('profileSurvivalBest'),
     profileNoteBest: document.getElementById('profileNoteBest'),
+    profileRhythmBest: document.getElementById('profileRhythmBest'),
+    profileRhythmTime: document.getElementById('profileRhythmTime'),
     profileLevelBests: document.getElementById('profileLevelBests'),
     deleteProfileBtn: document.getElementById('deleteProfileBtn'),
     profileCloseBtn: document.getElementById('profileCloseBtn'),
@@ -187,9 +190,15 @@ function boot(){
       meteorSurvivalBest: 0,
       meteorBest: 0,
       noteReadingBest: 0,
-      playMs: { meteorSky: 0, noteReading: 0 },
-      gamesPlayed: { meteorSky: 0, noteReading: 0 },
-      totalScore: { meteorSky: 0, noteReading: 0 }
+      rhythmConcertBest: 0,
+      rhythmUnlockedLevel: 1,
+      rhythmLevelsCompleted: {},
+      rhythmLevelBest: {},
+      rhythmSurvivalBest: 0,
+      rhythmSurvivalRounds: 0,
+      playMs: { meteorSky: 0, noteReading: 0, rhythmConcert: 0 },
+      gamesPlayed: { meteorSky: 0, noteReading: 0, rhythmConcert: 0 },
+      totalScore: { meteorSky: 0, noteReading: 0, rhythmConcert: 0 }
     };
   }
 
@@ -218,6 +227,13 @@ function boot(){
     stats.meteorSurvivalBest = Math.max(0, Number(stats.meteorSurvivalBest) || 0);
     stats.meteorBest = Math.max(0, Number(stats.meteorBest) || 0);
     stats.noteReadingBest = Math.max(0, Number(stats.noteReadingBest) || 0);
+    stats.rhythmConcertBest = Math.max(0, Number(stats.rhythmConcertBest) || 0);
+    stats.rhythmUnlockedLevel = Math.max(1,Math.min(RhythmConcert.CAMPAIGN.length,Math.floor(Number(stats.rhythmUnlockedLevel)||1)));
+    for (const field of ['rhythmLevelsCompleted','rhythmLevelBest']){
+      stats[field]=stats[field] && typeof stats[field]==='object' && !Array.isArray(stats[field]) ? stats[field] : {};
+    }
+    stats.rhythmSurvivalBest=Math.max(0,Number(stats.rhythmSurvivalBest)||0);
+    stats.rhythmSurvivalRounds=Math.max(0,Math.floor(Number(stats.rhythmSurvivalRounds)||0));
     stats.playMs = { ...defaultProfileStats().playMs, ...(stats.playMs || {}) };
     stats.gamesPlayed = { ...defaultProfileStats().gamesPlayed, ...(stats.gamesPlayed || {}) };
     stats.totalScore = { ...defaultProfileStats().totalScore, ...(stats.totalScore || {}) };
@@ -227,6 +243,9 @@ function boot(){
     stats.gamesPlayed.noteReading = Math.max(0, Number(stats.gamesPlayed.noteReading) || 0);
     stats.totalScore.meteorSky = Math.max(0, Number(stats.totalScore.meteorSky) || 0);
     stats.totalScore.noteReading = Math.max(0, Number(stats.totalScore.noteReading) || 0);
+    for (const field of ['playMs', 'gamesPlayed', 'totalScore']){
+      stats[field].rhythmConcert = Math.max(0, Number(stats[field].rhythmConcert) || 0);
+    }
 
     normalized.id = normalized.id || makeProfile(normalized.name).id;
     normalized.name = cleanProfileName(normalized.name) || 'Player 1';
@@ -324,6 +343,10 @@ function boot(){
   }
 
   function getNoteReadingBest(){ return Number(activeStats().noteReadingBest || 0); }
+  function getRhythmUnlockedLevel(){ return activeStats().rhythmUnlockedLevel; }
+  function getRhythmBest(selection=window.selectedLevel){
+    return selection==='survival' ? activeStats().rhythmSurvivalBest : Number(activeStats().rhythmLevelBest[String(selection)])||0;
+  }
   function setNoteReadingBest(score){
     activeStats().noteReadingBest = Math.max(getNoteReadingBest(), Number(score) || 0);
     saveProfiles();
@@ -362,6 +385,12 @@ function boot(){
     if (ui.profileNoteTime) ui.profileNoteTime.textContent = formatPlayTime(stats.playMs.noteReading);
     if (ui.profileSurvivalBest) ui.profileSurvivalBest.textContent = String(getMeteorSurvivalBest());
     if (ui.profileNoteBest) ui.profileNoteBest.textContent = String(getNoteReadingBest());
+    if (ui.profileRhythmBest) ui.profileRhythmBest.textContent = String(activeStats().rhythmConcertBest);
+    if (ui.profileRhythmTime) ui.profileRhythmTime.textContent = formatPlayTime(stats.playMs.rhythmConcert);
+    document.getElementById('profileRhythmUnlocked').textContent=`${getRhythmUnlockedLevel()} / ${RhythmConcert.CAMPAIGN.length}`;
+    document.getElementById('profileRhythmCompleted').textContent=`${Object.values(stats.rhythmLevelsCompleted).filter(Boolean).length} / ${RhythmConcert.CAMPAIGN.length}`;
+    document.getElementById('profileRhythmSurvival').textContent=String(stats.rhythmSurvivalBest);
+    document.getElementById('profileRhythmRounds').textContent=String(stats.rhythmSurvivalRounds);
 
     if (ui.profileList){
       ui.profileList.innerHTML = '';
@@ -458,6 +487,7 @@ function boot(){
     if (!activeRun) return 0;
     try{
       if (activeRun.mode === 'noteReading') return Number(nr.score) || 0;
+      if (activeRun.mode === 'rhythmConcert') return Number(rhythm.score) || 0;
       return Number(game.score) || 0;
     }catch(e){
       return 0;
@@ -479,12 +509,13 @@ function boot(){
     const elapsed = Math.max(0, performance.now() - activeRun.startedAt);
     const previousTotal = Math.floor(Number(stats.coins) || 0);
     const levelKey = completedLevel !== null && completedLevel !== 'survival' ? String(completedLevel) : null;
-    const firstClear = Boolean(won && levelKey && !stats.levelsCompleted[levelKey]);
+    const completedLevels=mode==='rhythmConcert' ? stats.rhythmLevelsCompleted : stats.levelsCompleted;
+    const firstClear = Boolean(won && levelKey && !completedLevels[levelKey]);
     stats.playMs[mode] = Math.max(0, Number(stats.playMs[mode]) || 0) + elapsed;
     stats.gamesPlayed[mode] = Math.max(0, Number(stats.gamesPlayed[mode]) || 0) + 1;
     stats.totalScore[mode] = Math.max(0, Number(stats.totalScore[mode]) || 0) + Math.max(0, Number(score) || 0);
     if (levelKey){
-      stats.levelsCompleted[levelKey] = true;
+      completedLevels[levelKey] = true;
     }
     const baseCoins = awardCoins ? Math.max(1, Math.floor(Math.max(0, Number(score) || 0) / COIN_SCORE_DIVISOR)) : 0;
     const multiplier = awardCoins && won ? WIN_COIN_MULTIPLIER : 1;
@@ -572,7 +603,7 @@ function boot(){
       for (const src of candidates){
         try{
           const a = new Audio(src);
-          a.loop = true; a.volume = 0.55;
+          a.loop = true; a.volume = (ui.musicVolume ? Number(ui.musicVolume.value)/100 : 0.55);
           // don't immediately play here; store and return the audio element
           ui._menuAudio = a;
           return a;
@@ -613,7 +644,7 @@ function boot(){
       try{
         const src = 'Assets/Sounds/Meteor crash.wav';
         const a = new Audio(src);
-        const vol = (ui.musicVolume ? Number(ui.musicVolume.value)/100 : 0.55) * 0.9;
+        const vol = (ui.soundVolume ? Number(ui.soundVolume.value)/100 : 0.55) * 0.9;
         a.volume = Math.max(0, Math.min(1, vol));
         a.play().catch(e=>{ console.warn('crash sfx play failed', e); });
       }catch(e){ console.warn('crash sfx error', e); }
@@ -738,7 +769,9 @@ function boot(){
   });
   if (ui.playAgainBtn) ui.playAgainBtn.addEventListener('click', async ()=>{
     hideGameOver();
-    if (window.currentMode === 'note-reading') {
+    if (window.currentMode === 'rhythm-concert') {
+      await startRhythmConcert();
+    } else if (window.currentMode === 'note-reading') {
       try { await startNoteReading(); } catch(e){ console.warn('startNoteReading failed', e); }
     } else {
       // restart the selected mode/level properly so timers and speeds reset
@@ -749,6 +782,7 @@ function boot(){
   });
   if (ui.mainMenuBtn) ui.mainMenuBtn.addEventListener('click', ()=>{
     finishProfileRun({ score: getCurrentRunScore() });
+    stopRhythmConcert();
     setInGameActionsVisible(false);
     // hide game over overlay and show the main menu (full-screen banner view)
     hideGameOver();
@@ -782,11 +816,14 @@ function boot(){
 
   // ready overlay click -> start game
   if (ui.readyOverlay){
-    ui.readyOverlay.addEventListener('click', ()=>{
+    ui.readyOverlay.addEventListener('click', (ev)=>{
+      if (window.currentMode === 'rhythm-concert' && !ev.target.closest('#rhythmStartBtn')) return;
       ui.readyOverlay.style.display = 'none';
       // trigger start flow directly
       stopMenuMusic();
-      if (window.currentMode === 'note-reading') {
+      if (window.currentMode === 'rhythm-concert') {
+        startRhythmConcert();
+      } else if (window.currentMode === 'note-reading') {
         startNoteReading();
       } else {
         startGame();
@@ -800,6 +837,7 @@ function boot(){
 
   function stopActivePlayWithoutReward(){
     finishProfileRun({ score: getCurrentRunScore(), awardCoins: false });
+    stopRhythmConcert();
     clearPlanetExplosion();
     game.started = false;
     game.over = false;
@@ -873,12 +911,14 @@ function boot(){
         hideGameOver();
         // note reading has no levels; go straight to main menu
           if (window.currentMode === 'note-reading') {
+            stopRhythmConcert();
             if (typeof nr !== 'undefined') { nr.active = false; nr.over = false; }
             if (ui.mainMenuOverlay) { ui.mainMenuOverlay.classList.remove('show-card'); ui.mainMenuOverlay.style.display = 'flex'; }
             if (ui.menuFloatingActions) ui.menuFloatingActions.style.display = '';
             if (ui.profilePanel) ui.profilePanel.style.display = 'none';
             return;
           }
+        if (window.currentMode === 'rhythm-concert') stopRhythmConcert();
         // ensure overlay is visible (inline style may be 'none' from gameplay), then reveal the card
         if (ui.mainMenuOverlay) {
           ui.mainMenuOverlay.style.display = 'flex';
@@ -904,7 +944,16 @@ function boot(){
       it.addEventListener('click', async ()=>{
         const mode = it.dataset.mode || it.querySelector('.mode-name')?.textContent || 'meteor-sky';
         console.log('Selecting mode', mode);
+        if (window.currentMode!==mode) window.selectedLevel=null;
         window.currentMode = mode;
+
+        if (mode === 'rhythm-concert') {
+          window.selectedLevel = window.selectedLevel || getRhythmUnlockedLevel();
+          if (ui.modeLevels) ui.modeLevels.style.display = 'block';
+          if (ui.noteReadingSetup) ui.noteReadingSetup.style.display = 'none';
+          renderLevels();
+          return;
+        }
 
         if (mode === 'note-reading') {
           // Note reading has its own clef, range, and accidental setup.
@@ -923,6 +972,9 @@ function boot(){
         if (ui.profilePanel) ui.profilePanel.style.display = 'none';
         // populate levels grid for the selected mode
         renderLevels();
+      });
+      if (it.dataset.mode === 'rhythm-concert') it.addEventListener('keydown', ev=>{
+        if (ev.code === 'Enter' || ev.code === 'Space'){ ev.preventDefault(); it.click(); }
       });
     }
   }
@@ -992,18 +1044,35 @@ function boot(){
     if (ui.mainMenuBtn) ui.mainMenuBtn.style.display = 'none';
   });
 
-  // Settings: volume slider wiring and Close button
+  // Main Settings: music and sound effects have independent saved volumes.
+  function readVolume(key, fallback=55){
+    const saved=localStorage.getItem(key), value=Number(saved);
+    return saved===null || !Number.isFinite(value) ? fallback : Math.max(0,Math.min(100,value));
+  }
   if (ui.musicVolume){
-    const saved = Number(localStorage.getItem('menu_volume'));
-    ui.musicVolume.value = isNaN(saved) ? 55 : saved;
+    ui.musicVolume.value = readVolume('menu_volume');
+    const output=document.getElementById('musicVolumeValue');
+    if (output) output.textContent=`${ui.musicVolume.value}%`;
     ui.musicVolume.addEventListener('input', ()=>{
-      const v = Number(ui.musicVolume.value) || 55;
+      const v = Number(ui.musicVolume.value);
       localStorage.setItem('menu_volume', String(v));
+      if (output) output.textContent=`${v}%`;
       const a = createMenuAudio(); if (a) a.volume = v/100;
       try{ const g = createGameAudio(); if (g) g.volume = v/100; }catch(e){}
     });
     // apply initial volume to any created audio
     try{ const a0 = createMenuAudio(); if (a0) a0.volume = Number(ui.musicVolume.value)/100; }catch(e){}
+  }
+  if (ui.soundVolume){
+    // Migrate the old shared level once, then keep effects independent of music.
+    ui.soundVolume.value=readVolume('sound_volume',readVolume('menu_volume'));
+    if (localStorage.getItem('sound_volume')===null) localStorage.setItem('sound_volume',ui.soundVolume.value);
+    const output=document.getElementById('soundVolumeValue');
+    if (output) output.textContent=`${ui.soundVolume.value}%`;
+    ui.soundVolume.addEventListener('input', ()=>{
+      localStorage.setItem('sound_volume',ui.soundVolume.value);
+      if (output) output.textContent=`${ui.soundVolume.value}%`;
+    });
   }
   if (ui.settingsCloseBtn) ui.settingsCloseBtn.addEventListener('click', ()=>{
     if (ui.settingsPanel) ui.settingsPanel.style.display = 'none';
@@ -1233,11 +1302,40 @@ function boot(){
   function selectedLevelIsStartable(){
     if (window.selectedLevel === 'survival') return true;
     const lvl = Number(window.selectedLevel);
+    if (window.currentMode==='rhythm-concert') return Number.isInteger(lvl) && lvl>=1 && lvl<=getRhythmUnlockedLevel() && lvl<=RhythmConcert.CAMPAIGN.length;
     return Number.isFinite(lvl) && lvl >= 1 && lvl <= unlockedLevel;
+  }
+
+  function rhythmLevelDescription(id){
+    return RhythmConcert.getRunSettings(id).rules.description;
+  }
+
+  function renderRhythmLevelDetail(){
+    const selection=window.selectedLevel;
+    ui.levelDetail.style.display=selection ? 'flex' : 'none';
+    if (!selection) return;
+    const run=RhythmConcert.getRunSettings(selection);
+    const locked=!selectedLevelIsStartable();
+    const completed=Boolean(activeStats().rhythmLevelsCompleted[String(selection)]);
+    ui.levelDetailTitle.textContent=run.mode==='survival' ? 'Survival' : `Level ${run.levelId} · ${run.name}`;
+    const details=[`Best score: <strong>${getRhythmBest(selection)}</strong>`,
+      `Status: ${locked ? 'Locked — complete the previous level' : completed ? 'Completed' : 'Unlocked'}`];
+    if (run.mode==='survival'){
+      details.push(`Most rounds played: ${activeStats().rhythmSurvivalRounds}`,
+        'Endless · Starts at 80 BPM · +2 BPM per round (maximum 140)',
+        'Quarter/eighth rhythms first; intermediate from round 5, advanced from round 9.',
+        'After the tempo cap: dotted quarters from round 32, dotted eighths from round 40, then harder dotted combinations. Sixteenth notes stay the shortest value.',
+        'Goal: Keep the audience meter above zero');
+    } else details.push(`${run.rounds} rounds · ${run.rules.bpm} BPM`,rhythmLevelDescription(run.levelId),
+      'Goal: Finish every round with some audience enthusiasm left');
+    ui.levelDetailStats.innerHTML=details.join('<br>');
+    ui.startLevelBtn.disabled=locked;
+    ui.startLevelBtn.textContent=locked ? 'Locked' : 'Start';
   }
 
   function renderLevelDetail(){
     if (!ui.levelDetail) return;
+    if (window.currentMode==='rhythm-concert'){ renderRhythmLevelDetail(); return; }
     const selected = window.selectedLevel;
     if (!selected){
       ui.levelDetail.style.display = 'none';
@@ -1285,9 +1383,9 @@ function boot(){
     }
   }
 
-  function selectMeteorLevel(level){
+  function selectGameLevel(level){
     window.selectedLevel = level;
-    try{ game.best = getMeteorBestForCurrentSelection(); }catch(e){}
+    if (window.currentMode!=='rhythm-concert') try{ game.best = getMeteorBestForCurrentSelection(); }catch(e){}
     renderLevels();
     renderLevelDetail();
   }
@@ -1302,6 +1400,25 @@ function boot(){
   }
 
   function configureReadyOverlay(){
+    ui.readyOverlay.classList.toggle('rhythm-ready',window.currentMode==='rhythm-concert');
+    if (window.currentMode === 'rhythm-concert'){
+      const run=RhythmConcert.getRunSettings(window.selectedLevel);
+      const level=run.rules;
+      if (ui.readyTitle) ui.readyTitle.textContent = 'Rhythm Concert';
+      if (ui.readySub) ui.readySub.textContent = run.mode==='survival' ? 'Survival · Starts at 80 BPM' : `Level ${run.levelId} · ${run.name}`;
+      if (ui.readyInstructions){
+        ui.readyInstructions.style.display = 'grid';
+        ui.readyInstructions.innerHTML = [
+          `<div class="rhythm-difficulty-description">${run.mode==='survival' ? 'An endless concert! Tempo rises to 140 BPM, then dotted quarters and eighths make the rhythms harder. Nothing shorter than sixteenth notes. Changes happen between rounds.' : `${run.rounds} rounds · ${level.bpm} BPM. ${rhythmLevelDescription(run.levelId)}`}</div>`,
+          '<div><strong>1. Listen.</strong> Read the rhythm while the drummer plays.</div>',
+          '<div><strong>2. Play.</strong> After the next 1–2–3–4, tap the drum or press Space. Rests are quiet beats.</div>',
+          '<div><strong>3. Learn.</strong> See your notes and hear your own performance.</div>',
+          '<div>Keep the crowd happy! If their meter empties, the concert ends. You can always try again.</div>',
+          '<button id="rhythmStartBtn" class="primary">Take the stage</button>'
+        ].join('');
+      }
+      return;
+    }
     const tutorial = window.currentMode === 'meteor-sky' && Number(window.selectedLevel) === 1;
     const noteReading = window.currentMode === 'note-reading';
     if (ui.readyTitle) ui.readyTitle.textContent = tutorial ? 'Tutorial' : (noteReading ? 'Note Reading' : 'Ready?');
@@ -1332,27 +1449,41 @@ function boot(){
 
   function renderLevels(){
     if (!ui.levelsGrid) return;
+    const rhythmMode=window.currentMode==='rhythm-concert';
+    const levelCount=rhythmMode ? RhythmConcert.CAMPAIGN.length : MAX_LEVELS;
+    const unlocked=rhythmMode ? getRhythmUnlockedLevel() : unlockedLevel;
+    ui.modeLevels.querySelector('.levels-header').textContent=rhythmMode ? 'Rhythm Concert · Levels' : 'Levels';
     ui.levelsGrid.innerHTML = '';
-    for (let i=1;i<=MAX_LEVELS;i++){
+    for (let i=1;i<=levelCount;i++){
       const el = document.createElement('div');
-      el.className = 'level-item ' + (i<=unlockedLevel ? 'unlocked' : 'locked') + (Number(window.selectedLevel) === i ? ' selected' : '') + (i === 1 ? ' tutorial' : '');
-      if (i === 1) el.innerHTML = '<span>1</span><small>Tutorial</small>';
+      const completed=rhythmMode && Boolean(activeStats().rhythmLevelsCompleted[String(i)]);
+      el.className = 'level-item ' + (i<=unlocked ? 'unlocked' : 'locked') + (Number(window.selectedLevel) === i ? ' selected' : '') + (!rhythmMode && i === 1 ? ' tutorial' : '') + (rhythmMode ? ' rhythm-level' : '') + (completed ? ' completed' : '');
+      if (rhythmMode){
+        el.setAttribute('role','button');el.tabIndex=0;
+        el.setAttribute('aria-label',`Level ${i}: ${RhythmConcert.CAMPAIGN[i-1].name}. ${i>unlocked ? 'Locked' : completed ? 'Completed' : 'Unlocked'}`);
+        el.addEventListener('keydown',ev=>{if(ev.code==='Enter' || ev.code==='Space'){ev.preventDefault();el.click();}});
+      }
+      if (!rhythmMode && i === 1) el.innerHTML = '<span>1</span><small>Tutorial</small>';
       else el.textContent = String(i);
       el.dataset.level = String(i);
       el.addEventListener('click', ()=>{
         const lvl = Number(el.dataset.level);
-        selectMeteorLevel(lvl);
+        selectGameLevel(lvl);
       });
       ui.levelsGrid.appendChild(el);
     }
     // add a Survival mode tile after the regular levels
     const surv = document.createElement('div');
-    surv.className = 'level-item unlocked survival' + (window.selectedLevel === 'survival' ? ' selected' : '');
+    surv.className = 'level-item unlocked survival' + (window.selectedLevel === 'survival' ? ' selected' : '') + (rhythmMode ? ' rhythm-level' : '');
     surv.textContent = 'Survival';
     surv.dataset.level = 'survival';
     surv.addEventListener('click', ()=>{
-      selectMeteorLevel('survival');
+      selectGameLevel('survival');
     });
+    if (rhythmMode){
+      surv.setAttribute('role','button');surv.tabIndex=0;
+      surv.addEventListener('keydown',ev=>{if(ev.code==='Enter' || ev.code==='Space'){ev.preventDefault();surv.click();}});
+    }
     ui.levelsGrid.appendChild(surv);
     renderLevelDetail();
   }
@@ -2750,6 +2881,14 @@ function step(ts){
   const dt = Math.min(0.033, (ts - lastTs)/1000 || 0.016);
   lastTs = ts;
 
+  if (window.currentMode === 'rhythm-concert'){
+    rhythm.update();
+    if (rhythm.paused && rhythm.active) showRhythmPause();
+    rhythm.draw();
+    requestAnimationFrame(step);
+    return;
+  }
+
   // Branch: Note Reading mode — always render the Note Reading screen when selected
   if (window.currentMode === 'note-reading'){
     try { stepNoteReading(dt); } catch(e) {
@@ -3068,6 +3207,141 @@ function updateAudio(){
 }
 
 /* ------------------- Boot ------------------- */
+  const rhythmControls = document.getElementById('rhythmControls');
+  const rhythmPausePanel = document.getElementById('rhythmPausePanel');
+  const rhythmPauseBtn = document.getElementById('rhythmPauseBtn');
+  const rhythmStatus = document.getElementById('rhythmStatus');
+  let rhythmStartRequest = 0;
+  const rhythm = new RhythmConcert.Concert({
+    canvas:ui.canvas,
+    getAudioContext:()=>{
+      if (!audio.ctx || audio.ctx.state === 'closed'){
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        audio.ctx = new AudioCtx({latencyHint:'interactive'});
+      }
+      return audio.ctx;
+    },
+    getVolume:()=>ui.soundVolume ? Number(ui.soundVolume.value)/100 : 0.55,
+    announce:text=>{ rhythmStatus.textContent = text; },
+    onStart:()=>startProfileRun('rhythmConcert'),
+    onResult:(score,{rounds,selection})=>{
+      const stats=activeStats();
+      stats.rhythmConcertBest = Math.max(stats.rhythmConcertBest,score);
+      if (selection==='survival'){
+        stats.rhythmSurvivalBest=Math.max(stats.rhythmSurvivalBest,score);
+        stats.rhythmSurvivalRounds=Math.max(stats.rhythmSurvivalRounds,rounds);
+      } else {
+        stats.rhythmLevelBest[String(selection)]=Math.max(getRhythmBest(selection),score);
+      }
+      saveProfiles();
+    },
+    onEnd:({score,rounds,won,selection,levelId})=>{
+      rhythmControls.hidden = true;
+      setInGameActionsVisible(false);
+      const stats=activeStats();
+      const previousUnlocked=stats.rhythmUnlockedLevel;
+      if (won) stats.rhythmUnlockedLevel=Math.max(previousUnlocked,Math.min(levelId+1,RhythmConcert.CAMPAIGN.length));
+      const reward=finishProfileRun({score,won,completedLevel:won ? levelId : null});
+      saveProfiles();
+      ui.overlay.style.display = 'flex';
+      ui.overlay.classList.add('rhythm-result');
+      const title = ui.overlay.querySelector('.go-title');
+      title.textContent = won ? 'Well Done!' : 'Take a bow!'; title.style.color = '#ffd777';
+      const message = document.getElementById('rhythmEndMessage');
+      message.hidden = false;
+      message.textContent = won ? `Level ${levelId} complete — all ${rounds} rounds played! ${stats.rhythmUnlockedLevel>previousUnlocked ? 'Level '+stats.rhythmUnlockedLevel+' unlocked!' : levelId===RhythmConcert.CAMPAIGN.length ? 'You’ve reached the final level! Try an endless Survival concert next.' : 'Great concert! Try the next level or beat your best.'}` :
+        `${selection==='survival' ? 'Survival concert' : 'Concert'} ended after ${rounds} rounds. The crowd needs a little break. Every drummer improves with practice — try again!`;
+      ui.overlayScore.textContent = String(score);
+      ui.overlay.querySelectorAll('.new-high').forEach(badge=>badge.remove());
+      ui.overlayBest.textContent = String(getRhythmBest(selection));
+      ui.selectLevelBtn.style.display = '';
+      ui.mainMenuBtn.style.display = '';
+      showCoinReward(reward);
+      renderLevels();
+      rhythmStatus.textContent = message.textContent+` ${score} points.`;
+    }
+  });
+
+  async function startRhythmConcert(){
+    if (!selectedLevelIsStartable()) return;
+    const request = ++rhythmStartRequest;
+    // No microphone or MIDI permission is needed for this mode.
+    stopMic();
+    game.started = false; nr.active = false;
+    stopMenuMusic(); stopGameMusic();
+    resetCoinReward(); hideGameOver();
+    ui.mainMenuOverlay.style.display = 'none';
+    ui.readyOverlay.style.display = 'none';
+    ui.canvas.classList.add('rhythm-canvas');
+    ui.canvas.tabIndex = 0;
+    ui.canvas.setAttribute('aria-label','Rhythm Concert. Press Space or tap to play the snare. Escape pauses.');
+    rhythmControls.hidden = true;
+    const started = await rhythm.start(window.selectedLevel);
+    if (request !== rhythmStartRequest) return;
+    if (started){
+      rhythmControls.hidden = false;
+      rhythmPausePanel.hidden = true;
+      rhythmPauseBtn.textContent = 'Pause';
+      setInGameActionsVisible(true);
+      ui.canvas.focus({preventScroll:true});
+    } else if (window.currentMode === 'rhythm-concert'){
+      configureReadyOverlay();
+      ui.readySub.textContent = 'Sound could not start. Click to try again.';
+      ui.readyOverlay.style.display = 'flex';
+    }
+    if (ui.levelTimer) ui.levelTimer.style.display = 'none';
+  }
+
+  function stopRhythmConcert(){
+    rhythmStartRequest++;
+    rhythm.stop();
+    rhythmControls.hidden = true;
+    rhythmPausePanel.hidden = true;
+    ui.canvas.classList.remove('rhythm-canvas');
+    ui.canvas.removeAttribute('tabindex');
+    ui.canvas.setAttribute('aria-label','game canvas');
+    ui.selectLevelBtn.style.display = '';
+    document.getElementById('rhythmEndMessage').hidden = true;
+    ui.overlay.classList.remove('rhythm-result');
+  }
+
+  function showRhythmPause(){
+    rhythmPausePanel.hidden = false;
+    rhythmPauseBtn.textContent = 'Paused';
+  }
+
+  rhythmPauseBtn.addEventListener('click', ()=>{ rhythm.pause(); showRhythmPause(); });
+  document.getElementById('rhythmResumeBtn').addEventListener('click', async ()=>{
+    await rhythm.resume();
+    if (rhythm.active && !rhythm.paused){
+      rhythmPausePanel.hidden = true;
+      rhythmPauseBtn.textContent = 'Pause';
+      ui.canvas.focus({preventScroll:true});
+    }
+  });
+  ui.canvas.addEventListener('pointerdown', ev=>{
+    if (window.currentMode !== 'rhythm-concert' || !rhythm.active || rhythm.paused || ev.button>0) return;
+    ev.preventDefault();
+    ui.canvas.focus({preventScroll:true});
+    rhythm.tap();
+  });
+  document.addEventListener('keydown', ev=>{
+    if (window.currentMode !== 'rhythm-concert') return;
+    if (ev.code === 'Escape' && rhythm.active && !rhythm.paused){
+      ev.preventDefault(); rhythm.pause(); showRhythmPause(); return;
+    }
+    if (ev.code !== 'Space' || ev.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
+    if (!rhythm.active || rhythm.paused) return;
+    ev.preventDefault();
+    if (!ev.repeat) rhythm.tap();
+  });
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden && rhythm.active){ rhythm.pause(); showRhythmPause(); }
+  });
+  window.addEventListener('blur', ()=>{
+    if (rhythm.active){ rhythm.pause(); showRhythmPause(); }
+  });
+
   applyActiveProfileState();
   initStars(140);
   drawBackground(); requestAnimationFrame(step);

@@ -24,6 +24,7 @@
         <h2 class="go-title">Game Over!</h2>
         <div class="go-score">Score: <span id="overlayScore">0</span></div>
         <div class="go-best">Best: <span id="overlayBest">0</span></div>
+        <p id="rhythmEndMessage" class="rhythm-end-message" hidden></p>
         <div id="coinReward" class="coin-reward" style="display:none">
           <div class="coin-earned">+<span id="overlayCoinsEarned">0</span> coins</div>
           <div id="overlayCoinDetails" class="coin-details"></div>
@@ -61,6 +62,14 @@
               <div class="mode-meta">
                 <div class="mode-name">Note Reading</div>
                 <div class="mode-desc">Read the note on the staff and play it on your piano!</div>
+              </div>
+            </div>
+            <div class="mode-category" style="margin-top:10px">RHYTHM &amp; LISTENING</div>
+            <div class="mode-item" data-mode="rhythm-concert" role="button" tabindex="0">
+              <div class="mode-thumb rhythm-thumb" aria-hidden="true">🥁</div>
+              <div class="mode-meta">
+                <div class="mode-name">Rhythm Concert</div>
+                <div class="mode-desc">Listen, drum, and keep the crowd cheering!</div>
               </div>
             </div>
             <div id="modeLevels" class="mode-levels" style="display:none">
@@ -124,11 +133,18 @@
               <input id="musicToggle" type="checkbox"> Play music (menu & game)
             </label>
             <div style="height:8px"></div>
-            <label style="display:flex; align-items:center; gap:8px; align-items:center">
-              Volume
+            <label for="musicVolume" style="display:flex; align-items:center; gap:8px">
+              Music volume
               <input id="musicVolume" type="range" min="0" max="100" value="55" style="flex:1;">
+              <output id="musicVolumeValue" for="musicVolume" class="volume-value">55%</output>
             </label>
             <div style="height:8px"></div>
+            <label for="soundVolume" style="display:flex; align-items:center; gap:8px">
+              Sound volume
+              <input id="soundVolume" type="range" min="0" max="100" value="55" style="flex:1;">
+              <output id="soundVolumeValue" for="soundVolume" class="volume-value">55%</output>
+            </label>
+            <small>Drums, count-in clicks, cheers, and game sound effects.</small>
             <div style="height:8px"></div>
             <div style="margin-top:6px; border-top:1px solid rgba(255,255,255,0.03); padding-top:8px">
               <div style="font-weight:800; margin-bottom:6px">Microphone calibration</div>
@@ -188,6 +204,12 @@
             <div class="profile-stat"><span>Note time</span><strong id="profileNoteTime">0m</strong></div>
             <div class="profile-stat"><span>Survival best</span><strong id="profileSurvivalBest">0</strong></div>
             <div class="profile-stat"><span>Note Reading best</span><strong id="profileNoteBest">0</strong></div>
+            <div class="profile-stat"><span>Rhythm Concert best</span><strong id="profileRhythmBest">0</strong></div>
+            <div class="profile-stat"><span>Rhythm time</span><strong id="profileRhythmTime">0m</strong></div>
+            <div class="profile-stat"><span>Rhythm levels unlocked</span><strong id="profileRhythmUnlocked">1 / 10</strong></div>
+            <div class="profile-stat"><span>Rhythm levels completed</span><strong id="profileRhythmCompleted">0 / 10</strong></div>
+            <div class="profile-stat"><span>Rhythm Survival best</span><strong id="profileRhythmSurvival">0</strong></div>
+            <div class="profile-stat"><span>Rhythm Survival most rounds</span><strong id="profileRhythmRounds">0</strong></div>
           </div>
 
           <div class="levels-header">Meteor level bests</div>
@@ -216,11 +238,23 @@
         <div id="readyInstructions" class="ready-instructions" style="display:none"></div>
       </div>
     </div>
+    <div id="rhythmControls" hidden>
+      <button id="rhythmPauseBtn" class="rhythm-pause">Pause</button>
+      <div id="rhythmPausePanel" class="rhythm-pause-panel" hidden>
+        <div class="ready-card">
+          <div class="rhythm-pause-title">Intermission</div>
+          <p>Take a breath. We’ll count you in again.</p>
+          <button id="rhythmResumeBtn" class="primary">Back to the stage</button>
+        </div>
+      </div>
+    </div>
+    <div id="rhythmStatus" class="sr-only" role="status" aria-live="polite"></div>
   </div>
 
   <!-- controls panel removed (Input level, detected note, tolerances) -->
 </div>
 
+<script src="rhythm-concert.js"></script>
 <script src="main.js"></script>
 </body>
 </html>
