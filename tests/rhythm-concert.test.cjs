@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {LEVELS, CAMPAIGN, getRunSettings, generateMeasure, evaluatePerformance, Concert} = require('../rhythm-concert.js');
+const {LEVELS, CAMPAIGN, getRunSettings, generateMeasure, renderNotationGuide, evaluatePerformance, Concert} = require('../rhythm-concert.js');
 
 test('beginner measures fill 4/4 with valid quarter beats and beamed eighth pairs', ()=>{
   let seed=397;
@@ -57,6 +57,19 @@ test('silence, taps in rests, boundary windows, and unsorted taps are evaluated 
   assert.equal(evaluatePerformance([0,.75],[.75,0]).perfect,true);
 });
 
+test('extra hits cost three quarters of a note and can turn a round into an audience loss', ()=>{
+  const h=harness(),c=h.concert;
+  c.taps=[0,.75,1.5,2.25,.3,1.05];h.seek(18.3);c.evaluate();
+  assert.equal(c.result.correct,4);
+  assert.equal(c.result.extras.length,2);
+  assert.equal(c.result.accuracy,.625);
+  assert.equal(c.score,63);
+  assert.equal(c.crowd,43);
+  assert.equal(c.events.filter(e=>e.sound==='cheer' || e.sound==='boo').length,0);
+  assert.equal(evaluatePerformance([0],[0,.3,.6,.9]).accuracy,0);
+  c.stop();
+});
+
 function harness(selection){
   const ac={currentTime:0,state:'running',resume:async()=>{ac.state='running';}};
   let ended=0, scored=0;
@@ -80,6 +93,18 @@ function harness(selection){
   };
   return {concert,ac,sounds,seek,results,ended:()=>ended,scored:()=>scored};
 }
+
+test('campaign and Survival starts and retries reset the audience to neutral', async()=>{
+  const h=harness(),c=h.concert;
+  assert.equal(c.crowd,50);
+  c.makeNoise=()=>{};
+  for(const selection of [1,'survival',1]){
+    c.crowd=3;
+    assert.equal(await c.start(selection),true);
+    assert.equal(c.crowd,50);
+    c.stop();
+  }
+});
 
 test('input uses the audio clock, ignores demonstration/count-in, records early first taps', ()=>{
   const h=harness(), c=h.concert;
@@ -118,7 +143,7 @@ test('pause cancels audio, discards unfinished taps, and resumes the same unscor
   assert.equal(c.round,1);
   assert.equal(c.measure,measure);
   assert.equal(c.taps.length,0);
-  assert.equal(c.crowd,65);
+  assert.equal(c.crowd,50);
   c.stop();
 });
 
@@ -136,7 +161,7 @@ test('resuming after feedback advances without awarding points twice', async()=>
 test('repeated poor measures end the concert after replay; success restores enthusiasm', ()=>{
   const h=harness(), c=h.concert;
   c.taps=[0,.75,1.5,2.25]; c.evaluate();
-  assert.equal(c.crowd,80);
+  assert.equal(c.crowd,65);
   for (let i=0;i<5;i++){
     c.beginRound(); c.evaluate(); h.seek(26.1); c.update();
     if (!c.active) break;
@@ -151,7 +176,7 @@ test('scheduler interruptions pause rather than penalize or bunch stale drum hit
   const h=harness(), c=h.concert;
   h.ac.currentTime+=2; c.schedule();
   assert.equal(c.paused,true);
-  assert.equal(c.crowd,65);
+  assert.equal(c.crowd,50);
   assert.equal(h.scored(),0);
   c.stop();
 });
@@ -262,6 +287,24 @@ test('each good performance queues cheers; perfect performances get a bigger rea
   c.stop();
 });
 
+test('bad failures draw boos once, drain the neutral audience, and end after replay', ()=>{
+  const h=harness(1),c=h.concert;
+  for(const crowd of [28,6,0]){
+    h.seek(18.3);c.evaluate();
+    assert.equal(c.crowd,crowd);
+    assert.match(c.reaction,/boos/);
+    assert.equal(c.events.filter(e=>e.sound==='boo').length,1);
+    assert.equal(c.events.filter(e=>e.sound==='cheer' || e.sound==='applause').length,0);
+    const count=c.events.length;c.evaluate();assert.equal(c.events.length,count);
+    h.seek(24.5);c.update();assert.equal(c.active,true);
+    h.seek(26.01);c.update();
+  }
+  assert.equal(c.active,false);
+  assert.equal(c.completedRounds,3);
+  assert.equal(h.results[0].won,false);
+  c.stop();
+});
+
 test('pause/resume retains difficulty and awarded points without restarting the score animation', async()=>{
   const h=harness(),c=h.concert;
   c.level=LEVELS.advanced;c.beat=60/c.level.bpm;c.beginRound(false);
@@ -342,6 +385,51 @@ test('ten campaign levels have valid introductory and random bars within their o
   for(const selection of [0,11,-1,1.5,'beginner'])assert.throws(()=>getRunSettings(selection));
 });
 
+test('level 1 keeps its steady introduction then varies a single rest without consecutive repeats', ()=>{
+  const rules=getRunSettings(1).rules;
+  assert.deepEqual(generateMeasure(rules,()=>0,1).onsets,[0,1,2,3]);
+  const seen=new Set();
+  for(const random of [()=>0,()=>.25,()=>.5,()=>.999]){
+    let previous=generateMeasure(rules,random,1);
+    for(let round=2;round<=4;round++){
+      const measure=generateMeasure(rules,random,round,previous);
+      assert.equal(measure.onsets.length,3);
+      assert.equal(measure.symbols.filter(s=>s.kind==='rest').length,1);
+      assert.ok(measure.onsets.every(Number.isInteger));
+      assert.notDeepEqual(measure.symbols,previous.symbols);
+      seen.add(measure.symbols.find(s=>s.kind==='rest').beat);
+      previous=measure;
+    }
+  }
+  assert.equal(seen.size,4,'the rest can fall on any beat');
+  const h=harness(1),c=h.concert;
+  for(let round=2;round<=4;round++){
+    const previous=c.measure;
+    c.beginRound();
+    assert.equal(c.measure.onsets.length,3);
+    assert.notDeepEqual(c.measure.symbols,previous.symbols);
+  }
+  c.stop();
+});
+
+test('each pre-level notation guide contains exactly its playable vocabulary and staff symbols', ()=>{
+  for(const {id} of CAMPAIGN){
+    const run=getRunSettings(id),html=renderNotationGuide(id);
+    const symbols=[...html.matchAll(/data-rhythm-symbol="([^"]+)"/g)].map(match=>match[1]);
+    assert.deepEqual(symbols,[...run.rules.patterns,'time-signature','percussion-clef']);
+    assert.equal((html.match(/<svg /g)||[]).length,symbols.length);
+    assert.ok(html.includes(run.rounds+' rounds'));
+    assert.ok(html.includes(run.rules.bpm+' BPM'));
+    assert.ok(!html.includes('Listen.</strong>'));
+  }
+  const survival=renderNotationGuide('survival');
+  for(const kind of getRunSettings('survival',64).rules.patterns){
+    assert.ok(survival.includes(`data-rhythm-symbol="${kind}"`));
+  }
+  assert.ok(survival.includes('Endless rounds'));
+  assert.ok(survival.includes('80–140 BPM'));
+});
+
 test('finite levels count only scored rounds and finish once after final review', ()=>{
   const h=harness(1),c=h.concert,total=c.run.rounds;
   assert.equal(c.roundsLeft(),4);
@@ -362,6 +450,7 @@ test('finite levels count only scored rounds and finish once after final review'
 
 test('empty audience ends a campaign without awarding a clear, even on its final round', ()=>{
   const h=harness(1),c=h.concert;
+  c.crowd=88; // Four bad rounds drain exactly 88, testing the final-round boundary.
   for(let round=0;round<4;round++){h.seek(18.3);c.evaluate();h.seek(26.01);c.update();}
   assert.equal(c.crowd,0);assert.equal(c.roundsLeft(),0);
   assert.equal(h.results[0].won,false);assert.equal(c.active,false);c.stop();
@@ -448,6 +537,36 @@ test('fast Survival applause and voiced cheers finish before the student replay 
   assert.ok(stops.length>=10);
   assert.ok(Math.max(...stops)<=c.origin+20*c.beat-.039);
   c.stop();
+});
+
+test('boos use descending voices, respect mute, and finish before an early replay tap at every tempo', ()=>{
+  for(const round of [1,9,100]){
+    const h=harness('survival'),c=h.concert;
+    c.run=getRunSettings('survival',round);c.level=c.run.rules;c.beat=60/c.level.bpm;
+    c.taps=[-c.level.hitWindow];h.seek(18.3);c.evaluate();
+    const events=c.events.filter(e=>e.sound==='boo');
+    assert.equal(events.length,1);
+    const stops=[],pitches=[];
+    const parameter=()=>({setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){},value:0});
+    const node=()=>({connect(){},disconnect(){},start(){},stop(time){if(time!==undefined)stops.push(time);},
+      frequency:parameter(),Q:parameter(),gain:parameter()});
+    h.ac.createOscillator=()=>{
+      const oscillator=node(),values=[];
+      oscillator.frequency.setValueAtTime=value=>values.push(value);
+      oscillator.frequency.exponentialRampToValueAtTime=value=>values.push(value);
+      pitches.push(values);return oscillator;
+    };
+    Object.assign(h.ac,{createGain:node,createBiquadFilter:node,destination:{}});
+    Concert.prototype.sound.call(c,events[0].time,'boo');
+    assert.equal(stops.length,3);
+    assert.ok(pitches.every(values=>values.at(-1)<values[0]));
+    assert.ok(Math.max(...stops)<=c.origin+20*c.beat+c.taps[0]-.039);
+    c.getVolume=()=>0;
+    Concert.prototype.sound.call(c,events[0].time,'boo');
+    assert.equal(stops.length,3,'muted effects create no voices');
+    c.pause();assert.equal(c.events.length,0);assert.equal(c.sources.size,0);
+    c.stop();
+  }
 });
 
 test('Survival caps at 140 BPM and introduces dotted quarters, eighths, and harder combinations', ()=>{

@@ -5,12 +5,12 @@ https://mankeymite.github.io/PianoQuest/
 
 Open `index.html` in a modern browser, then choose **Choose mode → Rhythm Concert**, select a numbered level tile or **Survival**, press **Start**, then **Take the stage**. No microphone or MIDI device is needed. In the main **Settings** panel, **Music volume** controls menu and game background music; **Sound volume** independently controls drums, count-in clicks, crowd cheers, and game effects. Both are saved between visits. Turning music down or off leaves rhythm sounds at their own volume. Retry keeps your selected level; **Select level** returns to the tiles.
 
-All levels use 4/4. Read the stationary one-line snare staff, hear a four-beat count-in and demonstration, then wait for another count-in and play with **Space**, mouse, or touch. Levels begin with introductory measures, then generate rhythms within their own rules. The HUD shows the current round/total and rounds remaining. The remaining count includes the current attempt until it is evaluated; feedback and replay finish before a level ends.
+Before each level, the ready screen shows drawn examples of its notes, rests, and rhythm groups, alongside the 4/4 time signature and snare clef. Survival previews its full vocabulary, including later dotted rhythms. All levels use 4/4. Read the stationary one-line snare staff, hear a four-beat count-in and demonstration, then wait for another count-in and play with **Space**, mouse, or touch. Levels begin with introductory measures, then generate rhythms within their own rules. The HUD shows the current round/total and rounds remaining. The remaining count includes the current attempt until it is evaluated; feedback and replay finish before a level ends.
 
 | Level | Tempo | Rounds | Focus |
 | --- | --- | --- | --- |
-| 1 · Find the beat | 76 BPM | 4 | Steady quarter notes |
-| 2 · Make room for silence | 78 BPM | 4 | Adds quarter rests |
+| 1 · Find the beat | 76 BPM | 4 | Steady quarter-note introduction, then one quarter rest in varying positions |
+| 2 · Make room for silence | 78 BPM | 4 | Quarter notes with up to two beats of rests |
 | 3 · Two notes to a beat | 80 BPM | 5 | Adds beamed eighth-note pairs |
 | 4 · The long and short of it | 80 BPM | 5 | Adds half notes and half rests |
 | 5 · Play the offbeat | 84 BPM | 5 | Adds eighth rests and offbeat eighth notes |
@@ -32,7 +32,7 @@ Half notes are struck once and last two beats; rests are always silent. Sixteent
 
 Each attempt receives note-by-note feedback: a green check means on beat, a cross means missed, arrows mean early/late, and a small red plus below the staff marks an extra tap. The game then plays every recorded tap back at its original timing, including mistakes. The quiet quarter-note click helps keep a steady pulse during your turn.
 
-Every good performance restores audience enthusiasm and triggers synthesized crowd cheers and applause, with a bigger reaction and confetti for perfect measures. During feedback and replay, the total score and earned points count upward and grow, settling back to normal size before the next bar. Reduced-motion preferences retain the count-up without the size animation. Repeated struggling performances empty the audience meter and end the concert with a gentle invitation to try again. Scores, play time, and concert rewards use the existing player profiles. Leaving early follows the other modes’ no-coin-reward behavior.
+The audience starts neutral at **50%** on every start and retry. Extra hits each subtract three quarters of a note's credit from accuracy; early/late hits receive half credit. Perfect rounds add 15 audience points, good rounds (at least 70% accuracy) add 9, weak rounds (40–69%) lose 7, and bad rounds (below 40%) lose 22. Good performances trigger synthesized crowd cheers and applause, with a bigger reaction and confetti for perfect measures; bad rounds trigger low crowd boos that finish before the tap replay. All crowd sounds follow Sound volume. During feedback and replay, the total score and earned points count upward and grow, settling back to normal size before the next bar. Reduced-motion preferences retain the count-up without the size animation. Repeated struggling performances empty the audience meter and end the concert. Scores, play time, and concert rewards use the existing player profiles. Leaving early follows the other modes’ no-coin-reward behavior.
 
 **Pause** or **Escape** takes an intermission. Switching tabs or losing focus also pauses. Resume gives a new count-in without penalizing an unfinished attempt or increasing Survival difficulty. A measure already scored advances on resume, or finishes the concert if it was the last round, so points cannot be earned twice.
 

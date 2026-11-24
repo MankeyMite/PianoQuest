@@ -1403,17 +1403,12 @@ function boot(){
     ui.readyOverlay.classList.toggle('rhythm-ready',window.currentMode==='rhythm-concert');
     if (window.currentMode === 'rhythm-concert'){
       const run=RhythmConcert.getRunSettings(window.selectedLevel);
-      const level=run.rules;
       if (ui.readyTitle) ui.readyTitle.textContent = 'Rhythm Concert';
       if (ui.readySub) ui.readySub.textContent = run.mode==='survival' ? 'Survival · Starts at 80 BPM' : `Level ${run.levelId} · ${run.name}`;
       if (ui.readyInstructions){
         ui.readyInstructions.style.display = 'grid';
         ui.readyInstructions.innerHTML = [
-          `<div class="rhythm-difficulty-description">${run.mode==='survival' ? 'An endless concert! Tempo rises to 140 BPM, then dotted quarters and eighths make the rhythms harder. Nothing shorter than sixteenth notes. Changes happen between rounds.' : `${run.rounds} rounds · ${level.bpm} BPM. ${rhythmLevelDescription(run.levelId)}`}</div>`,
-          '<div><strong>1. Listen.</strong> Read the rhythm while the drummer plays.</div>',
-          '<div><strong>2. Play.</strong> After the next 1–2–3–4, tap the drum or press Space. Rests are quiet beats.</div>',
-          '<div><strong>3. Learn.</strong> See your notes and hear your own performance.</div>',
-          '<div>Keep the crowd happy! If their meter empties, the concert ends. You can always try again.</div>',
+          `<div class="rhythm-notation-guide">${RhythmConcert.renderNotationGuide(window.selectedLevel)}</div>`,
           '<button id="rhythmStartBtn" class="primary">Take the stage</button>'
         ].join('');
       }

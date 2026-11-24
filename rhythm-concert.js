@@ -39,7 +39,8 @@
   });
 
   const CAMPAIGN = Object.freeze([
-    {name:'Find the beat', description:'Steady quarter notes. Find your groove!', difficulty:'beginner', bpm:76, rounds:4, patterns:['quarter'], openings:[['quarter','quarter','quarter','quarter']]},
+    {name:'Find the beat', description:'Find a steady beat, then keep it through one quarter rest.', difficulty:'beginner', bpm:76, rounds:4, maxRests:1, patterns:['quarter','rest'], openings:[['quarter','quarter','quarter','quarter']],
+      variations:Array.from({length:4},(_,restBeat)=>Array.from({length:4},(_,beat)=>beat===restBeat ? 'rest' : 'quarter'))},
     {name:'Make room for silence', description:'Quarter notes and quarter rests. Keep counting through silence.', difficulty:'beginner', bpm:78, rounds:4, patterns:['quarter','rest'], openings:[['quarter','rest','quarter','quarter']]},
     {name:'Two notes to a beat', difficulty:'beginner', bpm:80, rounds:5},
     {name:'The long and short of it', description:'Adds half notes and half rests, with quarters and eighth pairs.', difficulty:'intermediate', bpm:80, rounds:5, patterns:['quarter','rest','eighth-pair','half','half-rest'], openings:[['half','quarter','quarter'],['half-rest','quarter','quarter']]},
@@ -91,9 +92,14 @@
       name:concert ? concert.name : 'Survival', difficulty,rules,rhythmLabel,introRound};
   }
 
-  function generateMeasure(level=LEVELS.beginner, random=Math.random, round=3){
+  function generateMeasure(level=LEVELS.beginner, random=Math.random, round=3, previousMeasure=null){
     // Each level introduces its new symbols before generating varied measures.
     let patterns = level.openings[round-1];
+    if (!patterns && level.variations){
+      const previous=previousMeasure?.symbols.map(symbol=>symbol.kind).join(',');
+      const choices=level.variations.filter(variation=>variation.join(',')!==previous);
+      patterns=choices[Math.floor(random()*choices.length)];
+    }
     if (!patterns){
       patterns = [];
       let rests = 0, fastGroups = 0, dottedGroups = 0, noteCount = 0, beat = 0;
@@ -132,6 +138,50 @@
     return { symbols, notes, onsets:notes.map(note=>note.beat), beats:level.beats, beatUnit:level.beatUnit };
   }
 
+  function renderNotationGuide(selection=1){
+    const run=getRunSettings(selection);
+    const labels={quarter:'Quarter note',rest:'Quarter rest','eighth-pair':'Eighth notes',half:'Half note',
+      'half-rest':'Half rest',offbeat:'Eighth rest',syncopated:'Syncopation',sixteenths:'Sixteenth notes',
+      'mixed-sixteenths':'Mixed notes','dotted-quarter':'Dotted quarter','dotted-eighth':'Dotted eighth',
+      'reverse-dotted-quarter':'Reverse dotted quarter','reverse-dotted-eighth':'Reverse dotted eighth'};
+    // Survival eventually uses the full vocabulary, including dotted combinations.
+    const kinds=run.mode==='survival' ? getRunSettings('survival',64).rules.patterns : run.rules.patterns;
+    const svg=(content,staff)=>`<svg viewBox="0 0 112 72" aria-hidden="true" focusable="false">${staff ? '<path d="M10 52H102" stroke="currentColor" stroke-opacity=".25"/>' : ''}${content}</svg>`;
+    const card=(kind,label,content)=>`<figure class="rhythm-symbol" data-rhythm-symbol="${kind}">${svg(content,kind!=='time-signature')}<figcaption>${label}</figcaption></figure>`;
+    const cards=kinds.map(kind=>{
+      const pattern=PATTERNS[kind];
+      const single=pattern.notes.length+(pattern.rests?.length||0)===1;
+      const x=offset=>single ? 52 : 22+offset/pattern.duration*82;
+      const parts=[];
+      for(const [offset,duration] of pattern.rests||[]){
+        const nx=x(offset);
+        if(duration===2) parts.push(`<path d="M${nx-7} 52h14v-6h-14z" fill="currentColor"/>`);
+        else if(duration===.5) parts.push(`<g transform="translate(${nx} 0)" fill="currentColor"><ellipse cx="-1" cy="36" rx="4" ry="3"/><path d="M-2 37Q6 42 7 32L-1 60" fill="none" stroke="currentColor" stroke-width="2.5"/></g>`);
+        else parts.push(`<path transform="translate(${nx} 41)" d="M-3-12L6-3 1 4 7 12C-3 6-4 14 1 18C-10 14-8 4 0 6L-6-1 0-7Z" fill="currentColor"/>`);
+      }
+      for(const [offset,duration] of pattern.notes){
+        const nx=x(offset);
+        parts.push(`<ellipse cx="${nx}" cy="52" rx="6" ry="4.3" transform="rotate(-20 ${nx} 52)" fill="${duration===2 ? 'var(--rhythm-paper)' : 'currentColor'}" stroke="currentColor" stroke-width="1.8"/><path d="M${nx+5} 52V19" stroke="currentColor" stroke-width="2.2"/>`);
+        if(duration===1.5||duration===.75) parts.push(`<circle cx="${nx+12}" cy="48" r="2" fill="currentColor"/>`);
+        if(duration<1&&!pattern.beam) parts.push(`<path d="M${nx+5} 19c1 11 16 9 7 25 5-13-6-9-7-16Z" fill="currentColor"/>`);
+      }
+      if(pattern.beam){
+        const beam=(from,to,y)=>`<path d="M${x(from)+5} ${y}H${x(to)+5}" stroke="currentColor" stroke-width="4"/>`;
+        parts.push(beam(pattern.notes[0][0],pattern.notes.at(-1)[0],20));
+        const sixteenths=pattern.notes.filter(([,duration])=>duration===.25);
+        if(sixteenths.length>1) parts.push(beam(sixteenths[0][0],sixteenths.at(-1)[0],27));
+        else if(sixteenths.length===1){
+          const onset=sixteenths[0][0],hook=onset===pattern.notes[0][0] ? onset+.125 : onset-.125;
+          parts.push(beam(Math.min(onset,hook),Math.max(onset,hook),27));
+        }
+      }
+      return card(kind,labels[kind],parts.join(''));
+    });
+    const time=card('time-signature','4 beats / bar','<text x="56" y="34" text-anchor="middle" fill="currentColor" font-size="27" font-weight="800">4</text><text x="56" y="58" text-anchor="middle" fill="currentColor" font-size="27" font-weight="800">4</text>');
+    const clef=card('percussion-clef','Snare drum','<path d="M47 22V52M58 22V52" stroke="currentColor" stroke-width="5"/>');
+    return `<div class="rhythm-preview-meta"><span>${run.mode==='survival' ? 'Endless rounds' : run.rounds+' rounds'}</span><span>${run.mode==='survival' ? '80–140' : run.rules.bpm} BPM</span></div><div class="rhythm-guide-heading">${run.mode==='survival' ? 'Symbols you’ll meet' : 'In this level'}</div><div class="rhythm-symbol-grid" aria-label="Rhythm symbols">${cards.join('')}</div><div class="rhythm-misc-grid" aria-label="Staff symbols">${time}${clef}</div>`;
+  }
+
   function evaluatePerformance(expected, performed, hitWindow=0.16, nearWindow=0.26){
     // Sequence alignment gives one-to-one matches, even around eighth pairs.
     // A tap cannot earn credit for two notes. Both arrays contain seconds.
@@ -166,7 +216,7 @@
     const correct = notes.filter(note=>note.status === 'correct').length;
     const missed = notes.filter(note=>note.status === 'missed').length;
     const near = n - correct - missed;
-    const accuracy = n ? Math.max(0, Math.min(1, (correct + near*0.5 - extras.length*0.5)/n)) : 0;
+    const accuracy = n ? Math.max(0, Math.min(1, (correct + near*0.5 - extras.length*0.75)/n)) : 0;
     return { notes, extras, correct, missed, near, accuracy,
       perfect:correct === n && n>0 && extras.length === 0 };
   }
@@ -193,7 +243,7 @@
       this.paused = false;
       this.sources = new Set();
       this.score = 0;
-      this.crowd = 65;
+      this.crowd = 50;
       this.round = 0;
       this.completedRounds = 0;
       this.run = null;
@@ -225,7 +275,7 @@
         if (this.audio.state !== 'running') throw new Error('Audio could not start. Please try again.');
         this.makeNoise();
         this.active = true;
-        this.score = 0; this.crowd = 65; this.round = 0;
+        this.score = 0; this.crowd = 50; this.round = 0;
         this.completedRounds = 0;
         this.confettiUntil = 0;
         this.onStart();
@@ -260,25 +310,27 @@
       time = Math.max(ac.currentTime, time);
       const volume = Math.max(0, Math.min(1, this.getVolume()));
       if (volume === 0) return;
-      if (kind === 'cheer'){
-        // A small chorus of voiced "woo!" sounds, distinct from the snare/claps.
+      if (kind === 'cheer' || kind === 'boo'){
+        // Rising cheers and low, falling boos use a small chorus of voices.
         // Formants soften the sawtooth into a cartoon crowd voice; no downloads.
-        // Fit celebration tails before the replay, including fast Survival tempos.
-        const pace=Math.max(.2,Math.min(1,(this.origin+20*this.beat-time-.04)/.76));
+        // Fit crowd reactions before replay, including early taps and fast tempos.
+        const boo=kind==='boo';
+        const replayStart=this.origin+20*this.beat+(boo ? Math.min(0,...this.taps) : 0);
+        const pace=Math.max(.2,Math.min(1,(replayStart-time-.04)/.76));
         for (let voice=0;voice<3;voice++){
           const offset=voice*.045*pace, start=time+offset;
           const oscillator=ac.createOscillator(), vowel=ac.createBiquadFilter();
           const soften=ac.createBiquadFilter(), gain=ac.createGain();
-          const pitch=230+voice*57+Math.random()*35;
+          const pitch=boo ? 120+voice*23+Math.random()*12 : 230+voice*57+Math.random()*35;
           oscillator.type='sawtooth';
           oscillator.frequency.setValueAtTime(pitch,start);
-          oscillator.frequency.exponentialRampToValueAtTime(pitch*1.65,start+.2*pace);
-          oscillator.frequency.exponentialRampToValueAtTime(pitch*.92,start+.6*pace);
+          oscillator.frequency.exponentialRampToValueAtTime(pitch*(boo ? 1.02 : 1.65),start+.2*pace);
+          oscillator.frequency.exponentialRampToValueAtTime(pitch*(boo ? .78 : .92),start+.6*pace);
           vowel.type='bandpass'; vowel.Q.value=1.3;
-          vowel.frequency.setValueAtTime(650+voice*90,start);
-          vowel.frequency.linearRampToValueAtTime(1050+voice*110,start+.22*pace);
-          vowel.frequency.linearRampToValueAtTime(550+voice*70,start+.6*pace);
-          soften.type='lowpass'; soften.frequency.value=2100;
+          vowel.frequency.setValueAtTime(boo ? 350+voice*35 : 650+voice*90,start);
+          vowel.frequency.linearRampToValueAtTime(boo ? 300+voice*30 : 1050+voice*110,start+.22*pace);
+          vowel.frequency.linearRampToValueAtTime(boo ? 240+voice*25 : 550+voice*70,start+.6*pace);
+          soften.type='lowpass'; soften.frequency.value=boo ? 1000 : 2100;
           gain.gain.setValueAtTime(.001,start);
           gain.gain.linearRampToValueAtTime(volume*.14,start+.075*pace);
           gain.gain.setValueAtTime(volume*.12,start+.3*pace);
@@ -351,7 +403,7 @@
           this.level=this.run.rules;
           this.beat=60/this.level.bpm;
         }
-        let measure = generateMeasure(this.level, Math.random, this.run ? this.run.introRound : this.round);
+        let measure = generateMeasure(this.level, Math.random, this.run ? this.run.introRound : this.round, this.measure);
         if (this.round>2 && this.measure){
           for (let i=0;i<5 && JSON.stringify(measure.symbols) === JSON.stringify(this.measure.symbols);i++){
             measure=generateMeasure(this.level);
@@ -427,11 +479,11 @@
         from:previousScore, earned, start:this.audio.currentTime,
         end:this.origin+23*this.beat, settleEnd:this.origin+24*this.beat
       };
-      const change = r.perfect ? 15 : (r.accuracy >= 0.7 ? 9 : (r.accuracy>=0.4 ? -5 : -18));
+      const change = r.perfect ? 15 : (r.accuracy >= 0.7 ? 9 : (r.accuracy>=0.4 ? -7 : -22));
       this.crowd = Math.max(0,Math.min(100,this.crowd+change));
       this.reaction = r.perfect ? 'Perfect rhythm! Take the spotlight!' :
         r.accuracy>=0.7 ? 'Great groove! The crowd loves it.' :
-        r.accuracy>=0.4 ? 'You’re getting there. Keep the beat!' : 'Keep trying. Listen to the beat.';
+        r.accuracy>=0.4 ? 'You’re getting there. Keep the beat!' : 'The crowd boos. Listen closely and find the beat!';
       this.summary = `${r.correct} on beat · ${r.missed} missed · ${r.near} early/late · ${r.extras.length} extra`;
       this.onResult(this.score,{rounds:this.completedRounds,selection:this.selection});
       this.announce(`${this.reaction} ${this.summary}. ${earned} points. Audience ${this.crowd} percent.`);
@@ -444,6 +496,10 @@
         const spacing=Math.min(.065,Math.max(0,(room-.23)/(claps-1)));
         if (room>=.23) for (let i=0;i<claps;i++) this.queue(reactionStart+i*spacing, 'applause');
         if (r.perfect) this.confettiUntil = this.audio.currentTime+5;
+      } else if (r.accuracy<0.4){
+        const reactionStart=this.audio.currentTime+.03;
+        const replayStart=this.origin+20*this.beat+Math.min(0,...this.taps);
+        if (replayStart-.04-reactionStart>.18) this.queue(reactionStart,'boo');
       }
       // Replay every recorded tap at its original offset, including extras and silence.
       this.taps.forEach(time=>this.queue(this.origin+20*this.beat+time, 'snare', {type:'replay',beat:time/this.beat}));
@@ -782,7 +838,7 @@
     }
   }
 
-  const api = {LEVELS, CAMPAIGN, getRunSettings, generateMeasure, evaluatePerformance, Concert};
+  const api = {LEVELS, CAMPAIGN, getRunSettings, generateMeasure, renderNotationGuide, evaluatePerformance, Concert};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RhythmConcert = api;
 })(typeof window !== 'undefined' ? window : globalThis);
